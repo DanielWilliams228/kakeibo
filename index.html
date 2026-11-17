@@ -1,0 +1,2963 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kakeibo</title>
+<meta name="description" content="A private Kakeibo budget. Everything stays on this phone.">
+<meta name="theme-color" content="#0d1226">
+<meta name="color-scheme" content="dark">
+<!-- What Chrome needs to install the app on the home screen -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- Load the fonts early so the first screen draws in the right typeface -->
+<link rel="preload" href="fonts/jost-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/marcellus-latin.woff2" as="font" type="font/woff2" crossorigin>
+<!--
+  KAKEIBO – the installable app (Stage 6).
+  Works fully offline. All data stays on this phone (IndexedDB).
+
+  Files in this folder:
+    index.html            – this page: the whole app (look, screens and logic)
+    manifest.webmanifest  – the app's name, colours and icons, for installing
+    sw.js                 – the "service worker": keeps a copy of the app on the
+                            phone so it opens with no signal
+    fonts/                – Jost and Marcellus, plus their licences
+    icons/                – the home-screen icon in three sizes
+
+  How this page is laid out:
+    1. <style>  – the look of the app (colours, fonts, spacing, components)
+    2. <main>   – the screens (Home, Months, Savings, Settings)
+    3. <nav>    – the floating bottom tab bar
+    4. The bottom sheets (Add/Edit, Plan, Review, Savings) and the toast
+    5. <script> – storage (IndexedDB), formatting, drawing each screen,
+                  and every button's behaviour
+
+  IMPORTANT when changing any file: also change VERSION at the top of
+  sw.js, so phones pick up the new copy.
+-->
+<style>
+/* ============================================================
+   0. FONTS – stored inside the app, so it looks right offline.
+   Both are free fonts under the SIL Open Font License (see fonts/).
+   ============================================================ */
+@font-face {
+  font-family: "Jost";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/jost-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Marcellus";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/marcellus-latin.woff2") format("woff2");
+}
+/* ============================================================
+   1. DESIGN TOKENS
+   Layout concept: one narrow column of frosted-glass cards on a
+   night sky, with the single most important number at the top
+   and a floating pill tab bar at the bottom.
+   The app is deliberately dark-only, so colours are set once here.
+   ============================================================ */
+:root {
+  color-scheme: dark;
+
+  /* Sky and surfaces */
+  --sky-top:    #0d1226;
+  --sky-mid:    #171d3a;
+  --sky-low:    #25213f;
+  --glass:      rgba(255, 255, 255, 0.06);   /* card fill */
+  --glass-edge: rgba(255, 255, 255, 0.08);   /* hairline so cards read as cards */
+  --glass-deep: rgba(18, 22, 44, 0.86);      /* tab bar */
+  --sheet:      #161b35;                     /* bottom sheet */
+  --field:      rgba(255, 255, 255, 0.06);   /* text boxes and chips */
+  --track:      rgba(255, 255, 255, 0.09);   /* empty part of a progress bar */
+
+  /* Text */
+  --text:       #f3efe4;   /* main text: warm near-white, high contrast */
+  --mist:       #b3bed3;   /* secondary text */
+  --mist-dim:   #8a95ab;   /* tertiary text, still readable */
+  --gold:       #e0c98a;   /* accent, and money in */
+  --gold-ink:   #1b1708;   /* text placed on gold */
+
+  /* The four Kakeibo categories */
+  --needs:      #7fcbb4;   /* sea green */
+  --wants:      #e79bbd;   /* rose */
+  --culture:    #9fb3f4;   /* periwinkle */
+  --unexpected: #f0a868;   /* amber */
+
+  /* Status */
+  --over:       #ff8f8f;   /* over budget, errors, delete */
+
+  /* Type */
+  --font-head: "Marcellus", "Iowan Old Style", Georgia, serif;
+  --font-body: "Jost", "Segoe UI", Roboto, system-ui, sans-serif;
+
+  /* Type scale (small, on purpose) */
+  --fs-label: 0.75rem;   /* 12px uppercase section labels */
+  --fs-small: 0.875rem;  /* 14px secondary text */
+  --fs-body:  1rem;      /* 16px body */
+  --fs-title: 1.375rem;  /* 22px screen titles */
+  --fs-big:   1.75rem;   /* 28px card figures */
+  --fs-hero:  3rem;      /* 48px the one number that matters most */
+
+  /* 8px spacing grid */
+  --s1: 8px;  --s2: 16px;  --s3: 24px;  --s4: 32px;  --s5: 40px;  --s6: 48px;
+
+  --radius-card: 20px;
+  --radius-field: 14px;
+  --radius-pill: 999px;
+  --tap: 44px;            /* minimum touch target */
+}
+
+/* ============================================================
+   1. DESIGN TOKENS
+   Layout concept: one narrow column of frosted-glass cards on a
+   night sky, with the single most important number at the top
+   and a floating pill tab bar at the bottom.
+   The app is deliberately dark-only, so colours are set once here.
+   ============================================================ */
+:root {
+  color-scheme: dark;
+
+  /* Sky and surfaces */
+  --sky-top:    #0d1226;
+  --sky-mid:    #171d3a;
+  --sky-low:    #25213f;
+  --glass:      rgba(255, 255, 255, 0.06);   /* card fill */
+  --glass-edge: rgba(255, 255, 255, 0.08);   /* hairline so cards read as cards */
+  --glass-deep: rgba(18, 22, 44, 0.86);      /* tab bar */
+  --sheet:      #161b35;                     /* bottom sheet */
+  --field:      rgba(255, 255, 255, 0.06);   /* text boxes and chips */
+  --track:      rgba(255, 255, 255, 0.09);   /* empty part of a progress bar */
+
+  /* Text */
+  --text:       #f3efe4;   /* main text: warm near-white, high contrast */
+  --mist:       #b3bed3;   /* secondary text */
+  --mist-dim:   #8a95ab;   /* tertiary text, still readable */
+  --gold:       #e0c98a;   /* accent, and money in */
+  --gold-ink:   #1b1708;   /* text placed on gold */
+
+  /* The four Kakeibo categories */
+  --needs:      #7fcbb4;   /* sea green */
+  --wants:      #e79bbd;   /* rose */
+  --culture:    #9fb3f4;   /* periwinkle */
+  --unexpected: #f0a868;   /* amber */
+
+  /* Status */
+  --over:       #ff8f8f;   /* over budget, errors, delete */
+
+  /* Type */
+  --font-head: "Marcellus", "Iowan Old Style", Georgia, serif;
+  --font-body: "Jost", "Segoe UI", Roboto, system-ui, sans-serif;
+
+  /* Type scale (small, on purpose) */
+  --fs-label: 0.75rem;   /* 12px uppercase section labels */
+  --fs-small: 0.875rem;  /* 14px secondary text */
+  --fs-body:  1rem;      /* 16px body */
+  --fs-title: 1.375rem;  /* 22px screen titles */
+  --fs-big:   1.75rem;   /* 28px card figures */
+  --fs-hero:  3rem;      /* 48px the one number that matters most */
+
+  /* 8px spacing grid */
+  --s1: 8px;  --s2: 16px;  --s3: 24px;  --s4: 32px;  --s5: 40px;  --s6: 48px;
+
+  --radius-card: 20px;
+  --radius-field: 14px;
+  --radius-pill: 999px;
+  --tap: 44px;            /* minimum touch target */
+}
+
+/* ============================================================
+   2. BASE
+   ============================================================ */
+* { box-sizing: border-box; }
+
+/* Anything marked "hidden" stays hidden, even if a card style says otherwise */
+[hidden] { display: none !important; }
+
+html { height: 100%; }
+
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--sky-top);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The night sky sits on its own fixed layer. Drawing it once here is much
+   cheaper for the phone than repainting a fixed background while scrolling. */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--sky-top);
+  background-image:
+    radial-gradient(1px 1px at 12% 6%,  rgba(255,255,255,.55), transparent 60%),
+    radial-gradient(1px 1px at 34% 3%,  rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(1.5px 1.5px at 71% 8%, rgba(255,255,255,.45), transparent 60%),
+    radial-gradient(1px 1px at 88% 4%,  rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(1px 1px at 55% 11%, rgba(255,255,255,.25), transparent 60%),
+    radial-gradient(120% 60% at 80% -10%, rgba(224, 201, 138, 0.10), transparent 60%),
+    linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-low) 100%);
+  transform: translateZ(0);
+}
+
+/* Every figure in the app uses equal-width digits so columns line up */
+.num { font-variant-numeric: tabular-nums lining-nums; font-feature-settings: "tnum" 1, "lnum" 1; }
+
+h1, h2, h3 { font-family: var(--font-head); font-weight: 400; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+
+button { font: inherit; color: inherit; }
+button:disabled { opacity: .35; cursor: default; }
+
+/* Visible focus for keyboard users */
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 8px; }
+
+/* ============================================================
+   3. LAYOUT
+   ============================================================ */
+.app {
+  position: relative;
+  z-index: 1;
+  max-width: 480px;
+  margin: 0 auto;
+  padding-left:  max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  /* room at the bottom so the tab bar never covers content */
+  padding-block: calc(var(--s3) + env(safe-area-inset-top, 0px)) calc(120px + env(safe-area-inset-bottom, 0px));
+}
+
+.screen { display: flex; flex-direction: column; gap: var(--s2); }
+
+/* Small uppercase, letter-spaced section label */
+.label {
+  font-family: var(--font-body);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mist);
+  margin: 0;
+}
+
+.muted  { color: var(--mist); }
+.dim    { color: var(--mist-dim); }
+.small  { font-size: var(--fs-small); }
+
+/* ============================================================
+   4. COMPONENTS
+   ============================================================ */
+
+/* --- Screen header --- */
+.top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding-block: var(--s1);
+}
+.top h1 { font-size: var(--fs-title); line-height: 1.2; }
+.top .label { margin-bottom: 4px; }
+
+/* --- Warning banner (only if the phone won't let us save) --- */
+.warning {
+  background: rgba(255, 143, 143, 0.12);
+  color: var(--text);
+  border-radius: var(--radius-field);
+  padding: var(--s2);
+  font-size: var(--fs-small);
+}
+
+/* --- Card (no backdrop blur: over a plain sky it looks the same and
+       blur on every card is what made Stage 1 feel sluggish) --- */
+.card {
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-card);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* --- Hero: the biggest number on Home --- */
+.hero { gap: var(--s1); padding-block: var(--s4) var(--s3); }
+.hero-figure {
+  font-size: var(--fs-hero);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin-top: 4px;
+}
+.hero-figure .pence { font-size: 0.55em; color: var(--mist); font-weight: 400; }
+.hero-figure.over { color: var(--over); }
+.hero-sub { color: var(--mist); font-size: var(--fs-small); }
+.hero .bar { margin-top: var(--s2); }
+.hero-meta { display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-small); color: var(--mist-dim); }
+
+/* --- Thin progress bar --- */
+.bar {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+  overflow: hidden;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--bar-colour, var(--gold));
+  width: var(--fill, 0%);
+  transition: width 400ms cubic-bezier(.2,.7,.2,1);
+}
+.bar.over > span { background: var(--over); }
+
+/* --- Category rows --- */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); min-height: 24px; }
+.cat-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.cat-row { display: grid; grid-template-columns: 1fr auto; gap: 6px var(--s2); align-items: baseline; }
+.cat-row .bar { grid-column: 1 / -1; }
+.cat-row .amt { font-weight: 500; }
+
+/* --- Chip with a coloured dot --- */
+.chip { display: inline-flex; align-items: center; gap: var(--s1); font-weight: 500; }
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--dot, var(--mist));
+  flex-shrink: 0;
+}
+
+/* Category colour hooks */
+.c-needs      { --dot: var(--needs);      --bar-colour: var(--needs); }
+.c-wants      { --dot: var(--wants);      --bar-colour: var(--wants); }
+.c-culture    { --dot: var(--culture);    --bar-colour: var(--culture); }
+.c-unexpected { --dot: var(--unexpected); --bar-colour: var(--unexpected); }
+.c-in         { --dot: var(--gold); }
+
+/* --- Entry list (spacing instead of dividing lines) --- */
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tx {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
+  min-height: 52px;
+  padding: 6px var(--s1);
+  margin-inline: calc(var(--s1) * -1);
+  width: calc(100% + var(--s2));
+  background: none; border: 0; border-radius: 12px;
+  text-align: left; cursor: pointer;
+}
+.tx:active { background: rgba(255,255,255,.05); }
+.tx .dot { width: 10px; height: 10px; }
+.tx-main { min-width: 0; display: flex; flex-direction: column; }
+.tx-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-sub { font-size: var(--fs-small); color: var(--mist-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-amount { font-weight: 500; white-space: nowrap; }
+.tx-amount.is-in { color: var(--gold); }
+/* Small arrow on each row, so it's clear a tap opens it for editing */
+.tx .chev { width: 16px; height: 16px; color: var(--mist-dim); }
+/* Savings history: amount with the running balance under it */
+.tx-right { display: flex; flex-direction: column; align-items: flex-end; }
+.tx-bal { font-size: var(--fs-small); color: var(--mist-dim); white-space: nowrap; }
+
+/* Savings preview on Home */
+.pot { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
+.pot .figure { font-size: var(--fs-big); font-weight: 500; line-height: 1.1; }
+.pot .change { font-size: var(--fs-small); color: var(--gold); white-space: nowrap; }
+
+/* Backup reminder card: a gentle gold tint so it stands out without alarm */
+.reminder { background: rgba(224, 201, 138, 0.08); border-color: rgba(224, 201, 138, 0.30); gap: var(--s1); }
+.reminder .btn-row { margin-top: var(--s1); }
+.data-actions { display: flex; flex-wrap: wrap; gap: var(--s1); }
+
+/* Main action plus a smaller second one, side by side */
+.btn-row { display: grid; grid-template-columns: 3fr 2fr; gap: var(--s1); margin-top: var(--s2); }
+
+.empty { color: var(--mist); font-size: var(--fs-small); padding-block: var(--s1); }
+
+/* --- Text button (secondary) --- */
+.link-btn {
+  background: none; border: 0; padding: 0 var(--s1);
+  min-height: var(--tap);
+  color: var(--gold); font-size: var(--fs-small); font-weight: 500;
+  cursor: pointer;
+  margin-block: -10px;
+  margin-right: calc(var(--s1) * -1);
+}
+
+/* --- Months: month switcher, filter, day groups --- */
+.month-switch { display: grid; grid-template-columns: var(--tap) 1fr var(--tap); align-items: center; gap: var(--s1); }
+.month-switch h1 { text-align: center; font-size: var(--fs-title); }
+.month-totals { display: flex; justify-content: center; gap: var(--s3); font-size: var(--fs-small); color: var(--mist); }
+.month-totals strong { color: var(--text); font-weight: 500; }
+.month-totals .in strong { color: var(--gold); }
+
+.day + .day { margin-top: var(--s2); }
+.day-head { display: flex; justify-content: space-between; gap: var(--s2); padding-bottom: 4px; }
+
+/* --- Placeholder notes --- */
+.soon { gap: var(--s1); }
+.soon h2 { font-size: var(--fs-title); }
+.soon ul { margin: var(--s1) 0 0; padding-left: 1.1em; color: var(--mist); display: flex; flex-direction: column; gap: 4px; }
+.stage-pill {
+  align-self: flex-start;
+  font-size: var(--fs-label); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--mist); background: rgba(255,255,255,.06);
+  padding: 4px 10px; border-radius: var(--radius-pill);
+}
+
+/* --- Settings: sub-category manager --- */
+.subcat-group { display: flex; flex-direction: column; gap: var(--s1); }
+.subcat-group + .subcat-group { margin-top: var(--s3); }
+.subcat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.subcat-row { display: flex; align-items: center; gap: var(--s1); min-height: var(--tap); }
+.subcat-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subcat-row.is-hidden .name { color: var(--mist-dim); }
+.hidden-tag { font-size: var(--fs-label); letter-spacing: .08em; text-transform: uppercase; color: var(--mist-dim); margin-left: var(--s1); }
+.row-btn {
+  min-height: var(--tap); min-width: var(--tap);
+  padding: 0 10px;
+  background: none; border: 0; border-radius: 10px;
+  color: var(--mist); font-size: var(--fs-small); cursor: pointer;
+}
+.row-btn.gold { color: var(--gold); font-weight: 500; }
+.inline-form { display: flex; gap: var(--s1); align-items: center; }
+.inline-form input { flex: 1; min-width: 0; }
+
+/* ============================================================
+   5. FORM PARTS (used in the sheet and Settings)
+   ============================================================ */
+.text-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--s2);
+  border-radius: var(--radius-field);
+  border: 1px solid transparent;
+  background: var(--field);
+  color: var(--text);
+  font: 400 var(--fs-body) var(--font-body);  /* 16px stops the phone zooming in */
+  outline: none;
+}
+.text-input::placeholder { color: var(--mist-dim); }
+.text-input:focus { border-color: var(--gold); }
+
+.field { display: flex; flex-direction: column; gap: var(--s1); }
+.error { color: var(--over); font-size: var(--fs-small); }
+
+/* Choice chips (type, category, sub-category, date) */
+.choices { display: flex; flex-wrap: wrap; gap: var(--s1); }
+.choice {
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--s1);
+  min-height: var(--tap);
+  padding: 0 var(--s2);
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: var(--field);
+  color: var(--text);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+.choice[aria-pressed="true"] { border-color: var(--dot, var(--gold)); background: rgba(255,255,255,.11); }
+
+/* A real date picker hidden on top of a chip, so tapping the chip opens it */
+.date-pick input {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0; border: 0; padding: 0; margin: 0;
+  cursor: pointer;
+}
+
+/* Spending / Money in switch */
+.segmented {
+  display: grid; grid-template-columns: 1fr 1fr;
+  padding: 4px; gap: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--field);
+}
+.segmented button {
+  min-height: 40px;
+  border: 0; border-radius: var(--radius-pill);
+  background: none; color: var(--mist);
+  font-size: var(--fs-small); font-weight: 500; cursor: pointer;
+}
+.segmented button[aria-pressed="true"] { background: rgba(224, 201, 138, 0.16); color: var(--gold); }
+
+/* Main action button */
+.primary {
+  width: 100%;
+  min-height: 52px;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--gold); color: var(--gold-ink);
+  font-weight: 600; font-size: var(--fs-body); letter-spacing: .02em;
+  cursor: pointer;
+}
+.danger-btn {
+  width: 100%;
+  min-height: var(--tap);
+  border: 0; border-radius: var(--radius-pill);
+  background: none; color: var(--over);
+  font-size: var(--fs-small); font-weight: 500; cursor: pointer;
+}
+.danger-solid {
+  min-height: 52px;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--over); color: #2a0b0b;
+  font-weight: 600; cursor: pointer;
+}
+.quiet-btn {
+  min-height: 52px;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--field); color: var(--text);
+  font-weight: 500; cursor: pointer;
+}
+.actions { display: flex; flex-direction: column; gap: var(--s1); }
+.confirm { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2); border-radius: var(--radius-field); background: rgba(255,143,143,.08); }
+.confirm-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1); }
+
+/* ============================================================
+   5b. MONTHLY PLAN, ENVELOPES, CHECK-IN AND REVIEW
+   ============================================================ */
+/* Envelope row: what's left on the right */
+.env-left { font-size: var(--fs-small); color: var(--mist); text-align: right; }
+.env-left strong { color: var(--text); font-weight: 500; font-size: var(--fs-body); }
+.env-left.over strong { color: var(--over); }
+
+/* Label / value list, e.g. the plan summary */
+.summary { display: flex; flex-direction: column; gap: var(--s1); margin: 0; }
+.summary-row { display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-small); color: var(--mist); }
+.summary-row dt { min-width: 0; }
+.summary-row dd { margin: 0; color: var(--text); white-space: nowrap; }
+.summary-row.total { font-size: var(--fs-body); color: var(--text); padding-top: var(--s1); }
+.summary-row.total dd { font-weight: 600; color: var(--gold); }
+.summary-row.total dd.over { color: var(--over); }
+
+/* Weekly check-in rows, with a word for how each envelope is doing */
+.check-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.check-row { display: grid; grid-template-columns: 1fr auto; gap: 6px var(--s2); align-items: baseline; }
+.check-row .bar { grid-column: 1 / -1; }
+.check-row .meta { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-small); color: var(--mist-dim); }
+.status { font-size: var(--fs-label); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--mist-dim); }
+.status.fast { color: var(--gold); }
+.status.over { color: var(--over); }
+
+/* The four questions, read back */
+.qa { display: flex; flex-direction: column; gap: 2px; }
+.qa .q { font-size: var(--fs-small); color: var(--mist); }
+.qa .a { font-weight: 500; }
+.qa .a.text { font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qa-list { display: flex; flex-direction: column; gap: var(--s2); }
+
+/* Money boxes with a £ sign inside */
+.money-input { position: relative; }
+.money-input::before {
+  content: "£";
+  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  color: var(--mist); pointer-events: none;
+}
+.money-input .text-input { padding-left: 30px; font-variant-numeric: tabular-nums; }
+
+/* Plan form */
+.fixed-list { display: flex; flex-direction: column; gap: var(--s1); }
+.fixed-row { display: grid; grid-template-columns: minmax(0, 1fr) 116px var(--tap); gap: var(--s1); align-items: center; }
+.env-input { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: var(--s2); align-items: center; }
+.text-area { min-height: 112px; padding: 12px var(--s2); resize: vertical; line-height: 1.5; }
+.hint { font-size: var(--fs-small); color: var(--mist-dim); }
+.hint.bad { color: var(--over); }
+.live-total {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2);
+  padding: var(--s2);
+  border-radius: var(--radius-field);
+  background: rgba(224, 201, 138, 0.08);
+}
+.live-total strong { font-size: var(--fs-big); font-weight: 500; color: var(--gold); }
+.live-total.bad strong { color: var(--over); }
+.secondary-btn {
+  align-self: flex-start;
+  min-height: var(--tap);
+  padding: 0 var(--s2);
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--field); color: var(--text);
+  font-size: var(--fs-small); font-weight: 500; cursor: pointer;
+}
+
+/* ============================================================
+   6. FLOATING PILL TAB BAR
+   ============================================================ */
+.tabbar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--s2) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - 2 * max(16px, env(safe-area-inset-left, 0px))));
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-deep);
+  border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(14px);
+          backdrop-filter: blur(14px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+.tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  min-width: var(--tap);
+  border: 0; background: none; cursor: pointer;
+  border-radius: var(--radius-pill);
+  color: var(--mist-dim);
+  font-size: 0.6875rem;   /* 11px tab labels */
+  letter-spacing: 0.04em;
+}
+.tab svg { width: 22px; height: 22px; }
+.tab[aria-current="page"] { color: var(--gold); background: rgba(224, 201, 138, 0.10); }
+
+/* The Add tab is the main action: a gold circle */
+.tab.add { color: var(--gold-ink); }
+.tab.add .add-disc {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--gold);
+  box-shadow: 0 0 18px rgba(224, 201, 138, 0.28);  /* the one subtle glow */
+}
+.tab.add .add-disc svg { width: 24px; height: 24px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ============================================================
+   7. BOTTOM SHEET (for adding and editing)
+   ============================================================ */
+.scrim {
+  position: fixed; inset: 0;
+  background: rgba(4, 6, 16, 0.6);
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms ease;
+  z-index: 30;
+}
+.scrim.open { opacity: 1; pointer-events: auto; }
+
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  max-width: 480px; margin: 0 auto;
+  background: var(--sheet);
+  border-radius: 28px 28px 0 0;
+  border: 1px solid var(--glass-edge); border-bottom: 0;
+  padding-top: var(--s1);
+  padding-left:  max(var(--s3), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--s3), env(safe-area-inset-right, 0px));
+  padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom, 0px));
+  transform: translateY(105%);
+  visibility: hidden;
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1), visibility 0s linear 220ms;
+  z-index: 40;
+  display: flex; flex-direction: column; gap: var(--s3);
+  max-height: 92%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sheet.open { transform: translateY(0); visibility: visible; transition: transform 220ms cubic-bezier(.2,.8,.2,1), visibility 0s; }
+.grabber { width: 40px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.18); margin: 0 auto; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.sheet-head h2 { font-size: var(--fs-title); }
+.icon-btn {
+  width: var(--tap); height: var(--tap);
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  color: var(--mist); cursor: pointer;
+}
+
+/* Amount entry */
+.amount-field {
+  display: flex; align-items: baseline; gap: 4px;
+  padding-bottom: var(--s1);
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,.12);
+}
+.amount-field .pound { font-size: var(--fs-big); color: var(--mist); }
+.amount-field input {
+  flex: 1; min-width: 0;
+  background: none; border: 0; outline: none;
+  color: var(--text);
+  font: 500 var(--fs-hero)/1.1 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.amount-field input::placeholder { color: rgba(179,190,211,.35); }
+.amount-field:focus-within { box-shadow: inset 0 -2px 0 var(--gold); }
+
+/* ============================================================
+   8. TOAST
+   ============================================================ */
+.toast {
+  position: fixed; left: 50%;
+  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 12px);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 20px;
+  border-radius: var(--radius-pill);
+  background: #232a4d;
+  border: 1px solid var(--glass-edge);
+  color: var(--text);
+  font-size: var(--fs-small);
+  box-shadow: 0 10px 28px rgba(0,0,0,.35);
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+  z-index: 50;
+  display: flex; align-items: center; gap: var(--s1);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast .dot { --dot: var(--gold); }
+
+/* ============================================================
+   9. REDUCED MOTION – respect the phone's setting
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+
+<!-- ============================================================
+     SCREENS
+     ============================================================ -->
+<main class="app">
+
+  <!-- HOME -->
+  <section class="screen" id="screen-home" aria-labelledby="home-title">
+    <header class="top">
+      <div>
+        <p class="label" id="home-date">&nbsp;</p>
+        <h1 id="home-title">This month</h1>
+      </div>
+    </header>
+
+    <p class="warning" id="save-warning" hidden>This browser isn't letting the app save. You can still add things, but they'll be lost when you close the page. Try opening it in Chrome normally (not in an incognito tab).</p>
+
+    <!-- Backup reminder (only when it's been 30 days or more) -->
+    <div class="card reminder" id="backup-reminder" hidden>
+      <p class="label">Backup</p>
+      <p id="backup-reminder-text">It's been a while since your last backup.</p>
+      <div class="btn-row">
+        <button class="primary" type="button" data-backup>Back up now</button>
+        <button class="quiet-btn" type="button" id="reminder-later">Not now</button>
+      </div>
+    </div>
+
+    <!-- The most important number: what's left to spend this month -->
+    <div class="card hero">
+      <p class="label" id="hero-label">Left this month</p>
+      <p class="hero-figure num" id="hero-left">£0<span class="pence">.00</span></p>
+      <p class="hero-sub num" id="hero-sub">Nothing logged yet this month</p>
+      <div class="bar" role="img" id="hero-bar-wrap" aria-label="Share of money in spent"><span id="hero-bar"></span></div>
+      <div class="hero-meta num">
+        <span id="hero-spent">£0.00 spent</span>
+        <span id="hero-days"></span>
+      </div>
+    </div>
+
+    <!-- Prompt to plan the month (only when this month has no plan yet) -->
+    <div class="card" id="plan-prompt" hidden>
+      <div class="card-head"><h2 class="label">Start of the month</h2></div>
+      <p class="small muted">Enter your income, fixed costs and savings target. The app works out what's left to spend and helps you split it into four envelopes.</p>
+      <button class="primary" type="button" data-plan="current" id="plan-prompt-btn">Plan this month</button>
+    </div>
+
+    <!-- Envelopes (once the month has a plan) -->
+    <div class="card" id="envelopes-card" hidden>
+      <div class="card-head">
+        <h2 class="label" id="envelopes-label">Envelopes</h2>
+        <button class="link-btn" type="button" data-checkin>Check-in</button>
+      </div>
+      <ul class="cat-rows" id="envelopes"></ul>
+    </div>
+
+    <!-- Spending per category (when there's no plan yet) -->
+    <div class="card" id="spent-card">
+      <div class="card-head"><h2 class="label">Spent by category</h2></div>
+      <ul class="cat-rows" id="cat-rows"></ul>
+    </div>
+
+    <!-- Recent entries -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="label">Recent</h2>
+        <button class="link-btn" type="button" data-go="months">See all</button>
+      </div>
+      <ul class="list" id="recent"></ul>
+      <p class="small dim" id="recent-hint">Tap an entry to change or delete it.</p>
+    </div>
+
+    <!-- Savings pot preview -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="label">Savings pot</h2>
+        <button class="link-btn" type="button" data-go="savings" id="home-pot-link">History</button>
+      </div>
+      <div id="home-pot"></div>
+    </div>
+  </section>
+
+  <!-- MONTHS: every entry, month by month -->
+  <section class="screen" id="screen-months" hidden aria-labelledby="month-label">
+    <div class="card">
+      <div class="month-switch">
+        <button class="icon-btn" type="button" id="month-prev" aria-label="Previous month">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h1 id="month-label">November 2026</h1>
+        <button class="icon-btn" type="button" id="month-next" aria-label="Next month">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <div class="month-totals num">
+        <span class="in">In <strong id="month-in">£0.00</strong></span>
+        <span>Spent <strong id="month-spent">£0.00</strong></span>
+      </div>
+      <div class="choices" id="month-filter" role="group" aria-label="Show">
+        <button type="button" class="choice" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="choice" data-filter="spend" aria-pressed="false">Spending</button>
+        <button type="button" class="choice" data-filter="in" aria-pressed="false">Money in</button>
+      </div>
+    </div>
+
+    <!-- Start-of-month plan -->
+    <div class="card" id="plan-card">
+      <div class="card-head">
+        <h2 class="label">Plan</h2>
+        <button class="link-btn" type="button" id="plan-edit" hidden>Edit plan</button>
+      </div>
+      <div id="plan-body"></div>
+    </div>
+
+    <!-- Weekly check-in: spent against budget per envelope -->
+    <div class="card" id="checkin-card" hidden>
+      <div class="card-head"><h2 class="label">Weekly check-in</h2></div>
+      <div class="choices" id="week-choices" role="group" aria-label="Week"></div>
+      <div id="checkin-body" class="field" style="gap: var(--s3)"></div>
+    </div>
+
+    <!-- End of month: the four Kakeibo questions -->
+    <div class="card" id="review-card">
+      <div class="card-head">
+        <h2 class="label">The four questions</h2>
+        <button class="link-btn" type="button" id="review-edit" hidden>Edit answers</button>
+      </div>
+      <div id="review-body"></div>
+    </div>
+
+    <!-- Every entry this month -->
+    <div class="card">
+      <div class="card-head"><h2 class="label">Entries</h2></div>
+      <div id="month-list"></div>
+      <p class="small dim">Tap an entry to change or delete it.</p>
+    </div>
+  </section>
+
+  <!-- SAVINGS POT -->
+  <section class="screen" id="screen-savings" hidden aria-labelledby="savings-title">
+    <header class="top"><div><p class="label">Pot</p><h1 id="savings-title">Savings</h1></div></header>
+
+    <!-- Before the pot is set up -->
+    <div class="card soon" id="pot-setup">
+      <h2>Set up your savings pot</h2>
+      <p class="small muted">Enter what's in your savings today. You only do this once. After that, add what you move in each month and anything you take out.</p>
+      <button class="primary" type="button" data-pot-new="start" style="margin-top: var(--s2)">Enter starting balance</button>
+    </div>
+
+    <!-- Balance: the biggest number on this screen -->
+    <div class="card hero" id="pot-hero" hidden>
+      <p class="label">Balance</p>
+      <p class="hero-figure num" id="pot-balance">£0<span class="pence">.00</span></p>
+      <p class="hero-sub num" id="pot-sub"></p>
+      <p class="small num" id="pot-target" hidden></p>
+      <div class="btn-row">
+        <button class="primary" type="button" data-pot-new="deposit">Add a deposit</button>
+        <button class="quiet-btn" type="button" data-pot-new="withdraw">Withdraw</button>
+      </div>
+    </div>
+
+    <!-- Full history with running balance -->
+    <div class="card" id="pot-history-card" hidden>
+      <div class="card-head"><h2 class="label">History</h2><span class="small dim">balance</span></div>
+      <ul class="list" id="pot-history"></ul>
+      <p class="small dim">Tap a line to change or delete it.</p>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="screen-settings" hidden aria-labelledby="settings-title">
+    <header class="top"><div><p class="label">App</p><h1 id="settings-title">Settings</h1></div></header>
+
+    <!-- Install button (only when Chrome says the app can be installed) -->
+    <div class="card" id="install-card" hidden>
+      <div class="card-head"><h2 class="label">Install</h2></div>
+      <p class="small muted">Add Kakeibo to your home screen. It then opens like any other app and works with no signal.</p>
+      <button class="primary" type="button" id="install-btn">Install Kakeibo</button>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 class="label">Sub-categories</h2></div>
+      <p class="small muted">Hidden sub-categories don't appear when you add spending, but past entries keep them.</p>
+      <div id="subcat-manager"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 class="label">Backup</h2></div>
+      <p class="small muted">Everything you log is stored only on this phone, in this browser, and nothing is sent anywhere. Save a backup to Google Drive so you don't lose it if your phone is lost or reset.</p>
+      <div>
+        <p class="num" id="backup-status">Never backed up</p>
+        <p class="small dim num" id="backup-next"></p>
+      </div>
+      <button class="primary" type="button" data-backup>Back up now</button>
+      <p class="hint">Opens your phone's share menu. Choose Drive, then Save.</p>
+
+      <div class="data-actions">
+        <button class="secondary-btn" type="button" id="csv-btn">Export transactions (CSV)</button>
+        <label class="secondary-btn" for="restore-file" style="display:inline-flex;align-items:center">Restore from backup</label>
+        <input type="file" id="restore-file" accept=".json,application/json" hidden>
+      </div>
+
+      <!-- Restore confirmation (built into the page) -->
+      <div class="confirm" id="restore-confirm" hidden>
+        <p id="restore-text" class="num">Replace everything with this backup?</p>
+        <div class="confirm-buttons">
+          <button class="quiet-btn" type="button" id="restore-cancel">Cancel</button>
+          <button class="danger-solid" type="button" id="restore-go">Replace my data</button>
+        </div>
+      </div>
+      <p class="error" id="backup-error" role="alert" hidden></p>
+
+      <p class="small dim num" id="data-count"></p>
+    </div>
+  </section>
+</main>
+
+<!-- ============================================================
+     FLOATING TAB BAR
+     ============================================================ -->
+<nav class="tabbar" aria-label="Main">
+  <button class="tab" type="button" data-tab="home" aria-current="page">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>
+    Home
+  </button>
+  <button class="tab" type="button" data-tab="months">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+    Months
+  </button>
+  <button class="tab add" type="button" id="add-button" aria-label="Add">
+    <span class="add-disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
+  </button>
+  <button class="tab" type="button" data-tab="savings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5h16v10.5H4z"/><path d="M2.5 9.5 12 4l9.5 5.5"/><path d="M8 13v4M12 13v4M16 13v4"/></svg>
+    Savings
+  </button>
+  <button class="tab" type="button" data-tab="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    Settings
+  </button>
+</nav>
+
+<!-- ============================================================
+     ADD / EDIT – bottom sheet
+     ============================================================ -->
+<div class="scrim" id="scrim"></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true">
+  <div class="grabber" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="sheet-title">Add spending</h2>
+    <button class="icon-btn" type="button" id="sheet-close" aria-label="Close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+
+  <!-- Spending or Money in (only when adding) -->
+  <div class="segmented" id="type-toggle" role="group" aria-label="Type">
+    <button type="button" data-type="spend" aria-pressed="true">Spending</button>
+    <button type="button" data-type="in" aria-pressed="false">Money in</button>
+  </div>
+
+  <!-- Amount -->
+  <div class="field">
+    <label class="amount-field" for="amount">
+      <span class="pound">£</span>
+      <input id="amount" class="num" type="text" inputmode="decimal" placeholder="0.00" autocomplete="off" maxlength="12" aria-label="Amount in pounds" aria-describedby="amount-error">
+    </label>
+    <p class="error" id="amount-error" role="alert" hidden></p>
+  </div>
+
+  <!-- Spending: category and sub-category -->
+  <div id="spend-fields" class="field" style="gap: var(--s3)">
+    <div class="field">
+      <p class="label">Category</p>
+      <div class="choices" id="cat-choices"></div>
+    </div>
+    <div class="field">
+      <p class="label">Sub-category</p>
+      <div class="choices" id="sub-choices"></div>
+      <p class="error" id="sub-error" role="alert" hidden></p>
+    </div>
+  </div>
+
+  <!-- Money in: source -->
+  <div id="in-fields" class="field" hidden>
+    <label class="label" for="source">Source</label>
+    <input class="text-input" id="source" type="text" maxlength="40" placeholder="e.g. Salary" autocomplete="off" aria-describedby="source-error">
+    <div class="choices" id="source-choices"></div>
+    <p class="error" id="source-error" role="alert" hidden></p>
+  </div>
+
+  <!-- Date -->
+  <div class="field">
+    <p class="label">Date</p>
+    <div class="choices">
+      <button type="button" class="choice" id="date-today" aria-pressed="true">Today</button>
+      <button type="button" class="choice" id="date-yesterday" aria-pressed="false">Yesterday</button>
+      <label class="choice date-pick" id="date-other" aria-pressed="false">
+        <span id="date-other-text" class="num">Other date</span>
+        <input type="date" id="date-input" aria-label="Pick a date">
+      </label>
+    </div>
+    <p class="error" id="date-error" role="alert" hidden></p>
+  </div>
+
+  <!-- Note -->
+  <div class="field">
+    <label class="label" for="note">Note <span class="dim" style="text-transform:none;letter-spacing:0">(optional)</span></label>
+    <input class="text-input" id="note" type="text" maxlength="80" autocomplete="off">
+  </div>
+
+  <p class="error" id="form-error" role="alert" hidden></p>
+
+  <!-- Save / delete -->
+  <div class="actions" id="sheet-actions">
+    <button class="primary num" type="button" id="sheet-save">Add £0.00</button>
+    <button class="danger-btn" type="button" id="sheet-delete" hidden>Delete this entry</button>
+  </div>
+
+  <!-- Delete confirmation (built into the page) -->
+  <div class="confirm" id="confirm-panel" hidden>
+    <p id="confirm-text" class="num">Delete this entry? This can't be undone.</p>
+    <div class="confirm-buttons">
+      <button class="quiet-btn" type="button" id="confirm-cancel">Keep it</button>
+      <button class="danger-solid" type="button" id="confirm-delete">Delete</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     MONTHLY PLAN – bottom sheet
+     ============================================================ -->
+<section class="sheet" id="plan-sheet" role="dialog" aria-modal="true" aria-labelledby="plan-title" aria-hidden="true">
+  <div class="grabber" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="plan-title">Plan the month</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close without saving">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+
+  <div class="field">
+    <label class="label" for="plan-income">Income this month</label>
+    <div class="money-input"><input class="text-input" id="plan-income" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off"></div>
+    <p class="hint num" id="plan-income-hint" hidden></p>
+    <p class="error" id="plan-income-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field">
+    <p class="label">Fixed costs</p>
+    <p class="hint">Bills that go out every month, like rent, council tax or your phone.</p>
+    <div class="fixed-list" id="fixed-rows"></div>
+    <button class="secondary-btn" type="button" id="fixed-add">+ Add a fixed cost</button>
+    <p class="error" id="plan-fixed-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field">
+    <label class="label" for="plan-savings">Savings target</label>
+    <div class="money-input"><input class="text-input" id="plan-savings" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off"></div>
+    <p class="error" id="plan-savings-error" role="alert" hidden></p>
+  </div>
+
+  <div class="live-total num" id="plan-left-box" aria-live="polite">
+    <span>Left to spend</span><strong id="plan-left">£0.00</strong>
+  </div>
+
+  <div class="field">
+    <p class="label">Split it into envelopes</p>
+    <div class="field" id="budget-rows"></div>
+    <p class="hint num" id="plan-unshared"></p>
+    <p class="error" id="plan-budget-error" role="alert" hidden></p>
+  </div>
+
+  <p class="error" id="plan-form-error" role="alert" hidden></p>
+  <button class="primary" type="button" id="plan-save">Save plan</button>
+</section>
+
+<!-- ============================================================
+     END OF MONTH – the four questions, bottom sheet
+     ============================================================ -->
+<section class="sheet" id="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title" aria-hidden="true">
+  <div class="grabber" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="review-title">Month review</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close without saving">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <p class="hint">The first three are filled in from what you've logged. Change them if they're not quite right.</p>
+
+  <div class="field">
+    <label class="label" for="rv-had">1. How much did I have?</label>
+    <div class="money-input"><input class="text-input" id="rv-had" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off"></div>
+    <p class="hint num" id="rv-had-hint"></p>
+    <p class="error" id="rv-had-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field">
+    <label class="label" for="rv-save">2. How much did I want to save?</label>
+    <div class="money-input"><input class="text-input" id="rv-save" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off"></div>
+    <p class="error" id="rv-save-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field">
+    <label class="label" for="rv-spent">3. How much did I spend?</label>
+    <div class="money-input"><input class="text-input" id="rv-spent" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off"></div>
+    <p class="hint num" id="rv-spent-hint"></p>
+    <p class="error" id="rv-spent-error" role="alert" hidden></p>
+  </div>
+
+  <div class="live-total num" id="rv-result-box" aria-live="polite">
+    <span id="rv-result-label">Left over</span><strong id="rv-result">£0.00</strong>
+  </div>
+  <p class="hint num" id="rv-result-note"></p>
+
+  <div class="field">
+    <label class="label" for="rv-improve">4. How can I improve?</label>
+    <textarea class="text-input text-area" id="rv-improve" maxlength="1000" placeholder="What would you do differently next month?"></textarea>
+    <p class="error" id="rv-improve-error" role="alert" hidden></p>
+  </div>
+
+  <p class="error" id="rv-form-error" role="alert" hidden></p>
+  <button class="primary" type="button" id="rv-save-btn">Save answers</button>
+</section>
+
+<!-- ============================================================
+     SAVINGS POT – bottom sheet (starting balance, deposit, withdrawal)
+     ============================================================ -->
+<section class="sheet" id="pot-sheet" role="dialog" aria-modal="true" aria-labelledby="pot-title" aria-hidden="true">
+  <div class="grabber" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="pot-title">Add to savings</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close without saving">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+
+  <div class="segmented" id="pot-toggle" role="group" aria-label="Type">
+    <button type="button" data-ptype="deposit" aria-pressed="true">Deposit</button>
+    <button type="button" data-ptype="withdraw" aria-pressed="false">Withdrawal</button>
+  </div>
+
+  <div class="field">
+    <label class="amount-field" for="pot-amount">
+      <span class="pound">£</span>
+      <input id="pot-amount" class="num" type="text" inputmode="decimal" placeholder="0.00" autocomplete="off" maxlength="12" aria-label="Amount in pounds" aria-describedby="pot-amount-error">
+    </label>
+    <p class="hint num" id="pot-hint" hidden></p>
+    <div class="choices" id="pot-suggest"></div>
+    <p class="error" id="pot-amount-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field" id="pot-reason-field">
+    <label class="label" for="pot-reason" id="pot-reason-label">What for?</label>
+    <input class="text-input" id="pot-reason" type="text" maxlength="80" autocomplete="off">
+    <div class="choices" id="pot-reason-choices"></div>
+    <p class="error" id="pot-reason-error" role="alert" hidden></p>
+  </div>
+
+  <div class="field">
+    <p class="label">Date</p>
+    <div class="choices">
+      <button type="button" class="choice" id="pot-date-today" aria-pressed="true">Today</button>
+      <button type="button" class="choice" id="pot-date-yesterday" aria-pressed="false">Yesterday</button>
+      <label class="choice date-pick" id="pot-date-other" aria-pressed="false">
+        <span id="pot-date-other-text" class="num">Other date</span>
+        <input type="date" id="pot-date-input" aria-label="Pick a date">
+      </label>
+    </div>
+  </div>
+
+  <p class="error" id="pot-form-error" role="alert" hidden></p>
+
+  <div class="actions" id="pot-actions">
+    <button class="primary num" type="button" id="pot-save">Add £0.00</button>
+    <button class="danger-btn" type="button" id="pot-delete" hidden>Delete this</button>
+  </div>
+
+  <div class="confirm" id="pot-confirm" hidden>
+    <p id="pot-confirm-text" class="num">Delete this? This can't be undone.</p>
+    <div class="confirm-buttons">
+      <button class="quiet-btn" type="button" id="pot-confirm-cancel">Keep it</button>
+      <button class="danger-solid" type="button" id="pot-confirm-delete">Delete</button>
+    </div>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="dot"></span><span id="toast-text"></span></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   A. FIXED SETTINGS
+   ============================================================ */
+
+/** The four Kakeibo categories, in display order */
+const CATS = [
+  { key: "needs",      name: "Needs" },
+  { key: "wants",      name: "Wants" },
+  { key: "culture",    name: "Culture" },
+  { key: "unexpected", name: "Unexpected" }
+];
+
+/** Starter sub-categories, saved the first time the app opens */
+const STARTER_SUBS = {
+  needs:      ["Groceries", "Bills", "Fuel", "Transport", "Household"],
+  wants:      ["Eating out", "Takeaway", "Shopping", "Games", "Subscriptions"],
+  culture:    ["Books", "Art supplies", "Courses", "Music"],
+  unexpected: ["Car repairs", "Gifts", "Medical", "One-offs"]
+};
+
+const MAX_AMOUNT = 100000000;   // £1,000,000.00 in pence
+const MAX_SUB_NAME = 30;        // characters
+
+/* ============================================================
+   B. APP STATE (what's in memory while the app is open)
+   Amounts are always whole pence, to avoid rounding errors.
+   Dates are stored as "YYYY-MM-DD" and shown as DD/MM/YYYY.
+   ============================================================ */
+const state = {
+  saving: true,          // false if this browser blocks storage
+  entries: [],           // money in and spending
+  subs: [],              // sub-categories
+  lastSpend: null,       // last category + sub-category used, to save taps
+  months: {},            // plan and answers per month, e.g. months["2026-11"]
+  pot: [],               // savings pot: starting balance, deposits, withdrawals
+  lastBackup: null,      // when the last backup was made (milliseconds)
+  firstUse: null,        // when the app was first used, for the first reminder
+  reminderSnoozed: false, // "Not now" hides the reminder until the app is reopened
+  viewMonth: monthKey(new Date()),
+  filter: "all",
+  week: 1,               // week shown in the weekly check-in
+  weekFor: null,         // which month that week belongs to
+  renaming: null         // id of the sub-category being renamed
+};
+
+/* ============================================================
+   C. SMALL HELPERS – money, dates, safe text
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const gbp = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
+
+/** 4218 → "£42.18" */
+function money(pence) { return gbp.format(pence / 100); }
+
+/** Add up the amounts in a list of entries */
+function total(list) { return list.reduce((sum, e) => sum + e.amount, 0); }
+
+function pad(n) { return String(n).padStart(2, "0"); }
+/** Date → "2026-11-17" (the storage format) */
+function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+/** "2026-11-17" → Date */
+function fromISO(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+/** Date → "17/11/2026" */
+function ukDate(d) { return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; }
+/** "2026-11-17" → "17/11/2026" */
+function ukFromISO(s) { return ukDate(fromISO(s)); }
+/** Date → "2026-11" */
+function monthKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
+/** "2026-11" → "November 2026" */
+function monthLabel(key) { const [y, m] = key.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" }); }
+/** Move a month key forwards or backwards */
+function shiftMonth(key, by) { const [y, m] = key.split("-").map(Number); return monthKey(new Date(y, m - 1 + by, 1)); }
+function todayISO() { return toISO(new Date()); }
+function yesterdayISO() { const d = new Date(); d.setDate(d.getDate() - 1); return toISO(d); }
+
+/** Make text safe to put inside HTML */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+/** Tidy typed text: trim and squash repeated spaces */
+function clean(s) { return String(s).trim().replace(/\s+/g, " "); }
+
+function catName(key) { const c = CATS.find(c => c.key === key); return c ? c.name : "Unknown"; }
+function subName(id) { const s = state.subs.find(s => s.id === id); return s ? s.name : "Unknown"; }
+function subsFor(cat) { return state.subs.filter(s => s.cat === cat).sort((a, b) => a.order - b.order); }
+function visibleSubsFor(cat) { return subsFor(cat).filter(s => !s.hidden); }
+
+/** Newest first: by date, then by when it was entered */
+function newestFirst(a, b) {
+  if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+  return (b.created || 0) - (a.created || 0);
+}
+
+/* ============================================================
+   D. STORAGE – IndexedDB
+   Three "stores" (like tables):
+     entries – { id, type: "spend"|"in", amount, date, cat, subId, source, note, created, updated }
+     subcats – { id, cat, name, hidden, order }
+     meta    – small settings, e.g. { key: "lastSpend", cat, subId }
+     months  – { key: "2026-11",
+                 plan:   { income, fixed: [{ name, amount }], savings, budgets: { needs, wants, culture, unexpected } },
+                 review: { had, wantedSave, spent, improve, saved } }
+     savings – { id, type: "start"|"deposit"|"withdraw", amount, date, reason, note, created, updated }
+   Version 2 added "months", version 3 added "savings".
+   Existing data is kept when the version goes up.
+   ============================================================ */
+const DB_NAME = "kakeibo";
+const DB_VERSION = 3;
+let db = null;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(DB_NAME, DB_VERSION); } catch (err) { reject(err); return; }
+
+    // Runs only the very first time (or when DB_VERSION goes up)
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains("entries")) {
+        const s = d.createObjectStore("entries", { keyPath: "id", autoIncrement: true });
+        s.createIndex("date", "date");
+      }
+      if (!d.objectStoreNames.contains("subcats")) {
+        const s = d.createObjectStore("subcats", { keyPath: "id", autoIncrement: true });
+        let order = 0;
+        for (const cat of Object.keys(STARTER_SUBS)) {
+          for (const name of STARTER_SUBS[cat]) s.add({ cat, name, hidden: false, order: order++ });
+        }
+      }
+      if (!d.objectStoreNames.contains("meta")) d.createObjectStore("meta", { keyPath: "key" });
+      if (!d.objectStoreNames.contains("months")) d.createObjectStore("months", { keyPath: "key" });
+      if (!d.objectStoreNames.contains("savings")) d.createObjectStore("savings", { keyPath: "id", autoIncrement: true });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("Database blocked"));
+  });
+}
+
+/** Run one request against a store and wait until it is safely written */
+function withStore(name, mode, work) {
+  return new Promise((resolve, reject) => {
+    if (!db) { reject(new Error("No database")); return; }
+    const tx = db.transaction(name, mode);
+    const request = work(tx.objectStore(name));
+    let result;
+    request.onsuccess = () => { result = request.result; };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("Cancelled"));
+  });
+}
+const dbAll = name => withStore(name, "readonly", s => s.getAll());
+
+/* If this browser blocks storage, the app still works for the current
+   visit by keeping things in memory only (a warning is shown on Home). */
+let memoryId = 1000000;
+
+/** Save (add or replace) a record. Returns its id. */
+function dbPut(name, obj) {
+  if (!state.saving) return Promise.resolve(obj.id != null ? obj.id : memoryId++);
+  return withStore(name, "readwrite", s => s.put(obj));
+}
+/** Delete a record by id */
+function dbDelete(name, id) {
+  if (!state.saving) return Promise.resolve();
+  return withStore(name, "readwrite", s => s.delete(id));
+}
+
+/* ============================================================
+   E. DRAWING THE SCREENS
+   ============================================================ */
+
+/** The small ">" arrow shown on rows you can tap to edit */
+const CHEVRON = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+
+/** One row in a list of entries. Tapping it opens the edit sheet. */
+function entryRow(e, showDate) {
+  const isIn = e.type === "in";
+  const title = isIn ? e.source : subName(e.subId);
+  const details = [];
+  if (showDate) details.push(ukFromISO(e.date));
+  details.push(isIn ? "Money in" : catName(e.cat));
+  if (e.note) details.push(e.note);
+  return `
+    <li>
+      <button type="button" class="tx ${isIn ? "c-in" : "c-" + e.cat}" data-edit="${e.id}">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="tx-main">
+          <span class="tx-title">${esc(title)}</span>
+          <span class="tx-sub num">${esc(details.join(" · "))}</span>
+        </span>
+        <span class="tx-amount num ${isIn ? "is-in" : ""}">${isIn ? "+" : ""}${money(e.amount)}</span>
+        ${CHEVRON}
+      </button>
+    </li>`;
+}
+
+function renderHome() {
+  const now = new Date();
+  const thisMonth = monthKey(now);
+  $("home-date").textContent = `${now.toLocaleDateString("en-GB", { weekday: "long" })} ${ukDate(now)}`;
+  $("home-title").textContent = now.toLocaleDateString("en-GB", { month: "long" });
+
+  const month = entriesFor(thisMonth);
+  const moneyIn = total(month.filter(e => e.type === "in"));
+  const spends = month.filter(e => e.type === "spend");
+  const spent = total(spends);
+  const plan = planFor(thisMonth);
+
+  // With a plan: what's left of the spending money after fixed costs and savings.
+  // Without one: simply money in minus spending.
+  const pot = plan ? toSpend(plan) : moneyIn;
+  const left = pot - spent;
+  $("hero-label").textContent = plan ? "Left to spend" : "Left this month";
+
+  // Hero: pounds big, pence smaller
+  const [pounds, pence] = money(left).split(".");
+  $("hero-left").innerHTML = `${esc(pounds)}<span class="pence">.${esc(pence)}</span>`;
+  $("hero-left").classList.toggle("over", left < 0);
+  if (plan) $("hero-sub").textContent = `of ${money(pot)} after fixed costs and savings`;
+  else $("hero-sub").textContent = month.length === 0
+    ? "Nothing logged yet this month. Tap the gold + to start."
+    : `${money(moneyIn)} in so far this month`;
+
+  const usedPct = pot > 0 ? Math.min(100, Math.round((spent / pot) * 100)) : (spent > 0 ? 100 : 0);
+  $("hero-bar").style.setProperty("--fill", usedPct + "%");
+  $("hero-bar-wrap").classList.toggle("over", spent > pot);
+  $("hero-bar-wrap").setAttribute("aria-label", `${usedPct}% spent`);
+  $("hero-spent").textContent = `${money(spent)} spent`;
+
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = lastDay - now.getDate();
+  $("hero-days").textContent = daysLeft === 0 ? "Last day of the month" : `${daysLeft} ${daysLeft === 1 ? "day" : "days"} to go`;
+
+  // Plan prompt, or envelopes
+  const monthName = now.toLocaleDateString("en-GB", { month: "long" });
+  $("plan-prompt").hidden = !!plan;
+  $("plan-prompt-btn").textContent = `Plan ${monthName}`;
+  $("envelopes-card").hidden = !plan;
+  $("spent-card").hidden = !!plan;
+
+  if (plan) {
+    $("envelopes-label").textContent = `Envelopes · week ${Math.ceil(now.getDate() / 7)}`;
+    $("envelopes").innerHTML = CATS.map(c => {
+      const budget = plan.budgets[c.key] || 0;
+      const used = total(spends.filter(e => e.cat === c.key));
+      const remaining = budget - used;
+      const over = remaining < 0;
+      const pct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : (used > 0 ? 100 : 0);
+      return `
+        <li class="cat-row c-${c.key}">
+          <span class="chip"><span class="dot"></span>${esc(c.name)}</span>
+          <span class="env-left num ${over ? "over" : ""}">
+            <strong>${money(Math.abs(remaining))}</strong>${over ? " over" : ""}
+            <span class="dim">/ ${money(budget)}</span>
+          </span>
+          <div class="bar ${over ? "over" : ""}" aria-hidden="true"><span style="--fill:${pct}%"></span></div>
+        </li>`;
+    }).join("");
+  }
+
+  // Spent by category (bar = that category's share of all spending)
+  $("cat-rows").innerHTML = CATS.map(c => {
+    const amount = total(spends.filter(e => e.cat === c.key));
+    const pct = spent > 0 ? Math.round((amount / spent) * 100) : 0;
+    return `
+      <li class="cat-row c-${c.key}">
+        <span class="chip"><span class="dot"></span>${esc(c.name)}</span>
+        <span class="amt num">${money(amount)}</span>
+        <div class="bar" aria-hidden="true"><span style="--fill:${pct}%"></span></div>
+      </li>`;
+  }).join("");
+
+  // Recent entries (latest four, any month)
+  const recent = [...state.entries].sort(newestFirst).slice(0, 4);
+  $("recent").innerHTML = recent.length
+    ? recent.map(e => entryRow(e, true)).join("")
+    : `<li class="empty">Nothing logged yet. Tap the gold + to add your first spending.</li>`;
+  $("recent-hint").hidden = !recent.length;
+
+  // Savings pot preview
+  if (potStart()) {
+    const net = potMonthNet(thisMonth);
+    $("home-pot").innerHTML = `
+      <div class="pot">
+        <p class="figure num">${money(potBalance())}</p>
+        <span class="change num">${net ? `${net > 0 ? "+" : "−"}${money(Math.abs(net))} this month` : ""}</span>
+      </div>`;
+    $("home-pot-link").textContent = "History";
+  } else {
+    $("home-pot").innerHTML = `<p class="small muted">Not set up yet. Enter what's in your savings to start tracking it.</p>`;
+    $("home-pot-link").textContent = "Set up";
+  }
+}
+
+function renderMonths() {
+  const key = state.viewMonth;
+  $("month-label").textContent = monthLabel(key);
+  // You can look one month ahead, to plan it before it starts
+  $("month-next").disabled = key >= shiftMonth(monthKey(new Date()), 1);
+
+  renderPlanCard(key);
+  renderCheckin(key);
+  renderReviewCard(key);
+
+  const month = entriesFor(key);
+  $("month-in").textContent = money(total(month.filter(e => e.type === "in")));
+  $("month-spent").textContent = money(total(month.filter(e => e.type === "spend")));
+
+  document.querySelectorAll("#month-filter [data-filter]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter)));
+
+  const shown = month.filter(e => state.filter === "all" || e.type === state.filter).sort(newestFirst);
+  if (!shown.length) {
+    const what = state.filter === "spend" ? "No spending" : state.filter === "in" ? "No money in" : "Nothing";
+    $("month-list").innerHTML = `<p class="empty">${what} logged in ${esc(monthLabel(key))}.</p>`;
+    return;
+  }
+
+  // Group entries by day, newest day first
+  const days = [];
+  for (const e of shown) {
+    const last = days[days.length - 1];
+    if (last && last.date === e.date) last.items.push(e);
+    else days.push({ date: e.date, items: [e] });
+  }
+  $("month-list").innerHTML = days.map(day => {
+    const d = fromISO(day.date);
+    const daySpent = total(day.items.filter(e => e.type === "spend"));
+    return `
+      <div class="day">
+        <div class="day-head">
+          <span class="label num">${d.toLocaleDateString("en-GB", { weekday: "short" })} ${ukDate(d)}</span>
+          <span class="small dim num">${daySpent ? money(daySpent) + " spent" : ""}</span>
+        </div>
+        <ul class="list">${day.items.map(e => entryRow(e, false)).join("")}</ul>
+      </div>`;
+  }).join("");
+}
+
+function renderSettings() {
+  $("subcat-manager").innerHTML = CATS.map(c => {
+    const rows = subsFor(c.key).map(s => {
+      if (state.renaming === s.id) {
+        return `
+          <li class="subcat-row">
+            <div class="inline-form" style="flex:1">
+              <input class="text-input" id="rename-${s.id}" type="text" maxlength="${MAX_SUB_NAME}" value="${esc(s.name)}" aria-label="New name for ${esc(s.name)}" data-enter="save-rename" data-id="${s.id}">
+              <button type="button" class="row-btn" data-act="cancel-rename">Cancel</button>
+              <button type="button" class="row-btn gold" data-act="save-rename" data-id="${s.id}">Save</button>
+            </div>
+          </li>`;
+      }
+      return `
+        <li class="subcat-row ${s.hidden ? "is-hidden" : ""}">
+          <span class="name">${esc(s.name)}${s.hidden ? '<span class="hidden-tag">Hidden</span>' : ""}</span>
+          <button type="button" class="row-btn" data-act="rename" data-id="${s.id}">Rename<span class="sr"> ${esc(s.name)}</span></button>
+          <button type="button" class="row-btn" data-act="${s.hidden ? "show" : "hide"}" data-id="${s.id}">${s.hidden ? "Show" : "Hide"}<span class="sr"> ${esc(s.name)}</span></button>
+        </li>`;
+    }).join("");
+
+    return `
+      <div class="subcat-group c-${c.key}">
+        <span class="chip"><span class="dot"></span>${esc(c.name)}</span>
+        <ul class="subcat-list">${rows}</ul>
+        <div class="inline-form">
+          <input class="text-input" id="new-sub-${c.key}" type="text" maxlength="${MAX_SUB_NAME}" placeholder="New ${esc(c.name.toLowerCase())} sub-category" aria-label="New ${esc(c.name)} sub-category" data-enter="add" data-cat="${c.key}">
+          <button type="button" class="row-btn gold" data-act="add" data-cat="${c.key}">Add</button>
+        </div>
+        <p class="error" id="sub-err-${c.key}" role="alert" hidden></p>
+      </div>`;
+  }).join("");
+
+  const n = state.entries.length;
+  const p = state.pot.length;
+  $("data-count").textContent = `${n} ${n === 1 ? "entry" : "entries"} and ${p} savings ${p === 1 ? "record" : "records"} saved`;
+}
+
+function renderAll() { renderHome(); renderMonths(); renderSavings(); renderSettings(); renderBackup(); }
+
+/* ============================================================
+   F. TAB SWITCHING
+   ============================================================ */
+function showTab(name) {
+  document.querySelectorAll(".screen").forEach(s => { s.hidden = s.id !== `screen-${name}`; });
+  document.querySelectorAll(".tab[data-tab]").forEach(t => {
+    if (t.dataset.tab === name) t.setAttribute("aria-current", "page");
+    else t.removeAttribute("aria-current");
+  });
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll("[data-tab]").forEach(btn =>
+  btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+document.querySelectorAll("[data-go]").forEach(btn =>
+  btn.addEventListener("click", () => { state.viewMonth = monthKey(new Date()); renderMonths(); showTab(btn.dataset.go); }));
+
+/* Months: previous/next month and filter */
+$("month-prev").addEventListener("click", () => { state.viewMonth = shiftMonth(state.viewMonth, -1); renderMonths(); });
+$("month-next").addEventListener("click", () => { state.viewMonth = shiftMonth(state.viewMonth, 1); renderMonths(); });
+$("month-filter").addEventListener("click", e => {
+  const b = e.target.closest("[data-filter]"); if (!b) return;
+  state.filter = b.dataset.filter; renderMonths();
+});
+
+/* Tapping any entry, anywhere, opens it for editing */
+document.addEventListener("click", e => {
+  const row = e.target.closest("[data-edit]"); if (!row) return;
+  const entry = state.entries.find(x => x.id === Number(row.dataset.edit));
+  if (entry) openSheet(entry);
+});
+
+/* ============================================================
+   G. THE ADD / EDIT SHEET
+   ============================================================ */
+const sheet = {
+  mode: "add",        // "add" or "edit"
+  type: "spend",      // "spend" or "in"
+  id: null,           // entry being edited
+  cat: "needs",
+  subId: null,
+  date: todayISO(),
+  confirming: false   // showing the delete confirmation
+};
+
+/**
+ * Check a typed amount. Returns { pence } or { error } in plain English.
+ *   required:  false means a blank box counts as £0.00
+ *   allowZero: true means £0.00 is accepted
+ */
+function parseMoney(value, { required = true, allowZero = false } = {}) {
+  const raw = String(value).trim().replace(/[£,\s]/g, "");
+  if (raw === "") return required ? { error: "Enter an amount." } : { pence: 0 };
+  if (raw.startsWith("-")) return { error: "Amounts can't be negative." };
+  if (!/^(\d+(\.\d{0,2})?|\.\d{1,2})$/.test(raw)) return { error: "Use numbers only, with up to 2 decimal places, like 12.50." };
+  const pence = Math.round(parseFloat(raw) * 100);
+  if (pence === 0 && !allowZero) return { error: "The amount must be more than £0.00." };
+  if (pence > MAX_AMOUNT) return { error: "That's over £1,000,000. Check the amount." };
+  return { pence };
+}
+
+/** Same check, but where a blank or broken box should just count as 0 (for live totals) */
+function looseMoney(value) { return parseMoney(value, { required: false, allowZero: true }).pence || 0; }
+
+/** Pence → what to show in a box: 4218 → "42.18", 0 → "" */
+function toBox(pence) { return pence ? (pence / 100).toFixed(2) : ""; }
+
+/** Read the amount box in the Add sheet */
+function readAmount() { return parseMoney($("amount").value); }
+
+function showError(id, message) { $(id).textContent = message; $(id).hidden = false; }
+function clearErrors() {
+  ["amount-error", "sub-error", "source-error", "date-error", "form-error"].forEach(id => { $(id).hidden = true; $(id).textContent = ""; });
+}
+
+function updateSaveLabel() {
+  if (sheet.mode === "edit") { $("sheet-save").textContent = "Save changes"; return; }
+  const a = readAmount();
+  $("sheet-save").textContent = `Add ${money(a.pence || 0)}`;
+}
+
+/** Category and sub-category chips */
+function drawCategoryChoices() {
+  $("cat-choices").innerHTML = CATS.map(c => `
+    <button type="button" class="choice c-${c.key}" data-cat="${c.key}" aria-pressed="${c.key === sheet.cat}">
+      <span class="dot"></span>${esc(c.name)}
+    </button>`).join("");
+
+  let subs = visibleSubsFor(sheet.cat);
+  // When editing an entry whose sub-category is now hidden, still show it
+  const current = state.subs.find(s => s.id === sheet.subId);
+  if (current && current.hidden && current.cat === sheet.cat) subs = [...subs, current];
+
+  $("sub-choices").innerHTML = subs.length
+    ? subs.map(s => `<button type="button" class="choice c-${sheet.cat}" data-sub="${s.id}" aria-pressed="${s.id === sheet.subId}">${esc(s.name)}</button>`).join("")
+    : `<p class="small muted">No sub-categories shown for ${esc(catName(sheet.cat))}. Add or show one in Settings.</p>`;
+}
+
+/** Quick-pick chips for where money came from: recent sources, or "Salary" */
+function drawSourceChoices() {
+  const seen = [];
+  for (const e of [...state.entries].sort(newestFirst)) {
+    if (e.type === "in" && !seen.some(s => s.toLowerCase() === e.source.toLowerCase())) seen.push(e.source);
+    if (seen.length === 5) break;
+  }
+  if (!seen.length) seen.push("Salary");
+  const typed = clean($("source").value).toLowerCase();
+  $("source-choices").innerHTML = seen.map(s =>
+    `<button type="button" class="choice c-in" data-source="${esc(s)}" aria-pressed="${s.toLowerCase() === typed}">${esc(s)}</button>`).join("");
+}
+
+function drawDateChoices() {
+  const isToday = sheet.date === todayISO();
+  const isYesterday = sheet.date === yesterdayISO();
+  $("date-today").setAttribute("aria-pressed", String(isToday));
+  $("date-yesterday").setAttribute("aria-pressed", String(isYesterday));
+  $("date-other").setAttribute("aria-pressed", String(!isToday && !isYesterday));
+  $("date-other-text").textContent = (!isToday && !isYesterday) ? ukFromISO(sheet.date) : "Other date";
+  $("date-input").value = sheet.date;
+}
+
+function renderSheet() {
+  const isIn = sheet.type === "in";
+  $("sheet-title").textContent = `${sheet.mode === "edit" ? "Edit" : "Add"} ${isIn ? "money in" : "spending"}`;
+  $("type-toggle").hidden = sheet.mode === "edit";
+  document.querySelectorAll("#type-toggle [data-type]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.type === sheet.type)));
+  $("spend-fields").hidden = isIn;
+  $("in-fields").hidden = !isIn;
+  if (isIn) drawSourceChoices(); else drawCategoryChoices();
+  drawDateChoices();
+  $("sheet-delete").hidden = sheet.mode !== "edit";
+  $("sheet-actions").hidden = sheet.confirming;
+  $("confirm-panel").hidden = !sheet.confirming;
+  updateSaveLabel();
+}
+
+/** Pick the category and sub-category to start with: the last one used */
+function defaultSpendChoice() {
+  const last = state.lastSpend;
+  const lastSub = last && state.subs.find(s => s.id === last.subId && !s.hidden);
+  if (lastSub) return { cat: lastSub.cat, subId: lastSub.id };
+  const first = visibleSubsFor("needs")[0];
+  return { cat: "needs", subId: first ? first.id : null };
+}
+
+/** Open the sheet. Pass an entry to edit it, or nothing to add a new one. */
+function openSheet(entry) {
+  clearErrors();
+  sheet.confirming = false;
+  const start = defaultSpendChoice();
+  if (entry) {
+    sheet.mode = "edit";
+    sheet.id = entry.id;
+    sheet.type = entry.type;
+    sheet.date = entry.date;
+    sheet.cat = entry.type === "spend" ? entry.cat : start.cat;
+    sheet.subId = entry.type === "spend" ? entry.subId : start.subId;
+    $("amount").value = (entry.amount / 100).toFixed(2);
+    $("source").value = entry.source || "";
+    $("note").value = entry.note || "";
+  } else {
+    sheet.mode = "add";
+    sheet.id = null;
+    sheet.type = "spend";
+    sheet.date = todayISO();
+    sheet.cat = start.cat;
+    sheet.subId = start.subId;
+    $("amount").value = "";
+    $("source").value = "";
+    $("note").value = "";
+  }
+  renderSheet();
+  showPanel("sheet");
+  if (!entry) setTimeout(() => $("amount").focus(), 30);  // keyboard opens straight away
+}
+
+/* Opening and closing any bottom sheet (Add, Plan, Review) */
+let openPanel = null;
+function showPanel(id) {
+  openPanel = $(id);
+  openPanel.scrollTop = 0;
+  $("scrim").classList.add("open");
+  openPanel.classList.add("open");
+  openPanel.setAttribute("aria-hidden", "false");
+}
+function closeSheet() {
+  if (!openPanel) return;
+  $("scrim").classList.remove("open");
+  openPanel.classList.remove("open");
+  openPanel.setAttribute("aria-hidden", "true");
+  openPanel = null;
+  document.activeElement && document.activeElement.blur();
+}
+
+/* Sheet controls */
+$("add-button").addEventListener("click", () => openSheet());
+$("sheet-close").addEventListener("click", closeSheet);
+document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", closeSheet));
+$("scrim").addEventListener("click", closeSheet);
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || !openPanel) return;
+  if (openPanel.id === "sheet" && sheet.confirming) { sheet.confirming = false; renderSheet(); }
+  else if (openPanel.id === "pot-sheet" && potForm.confirming) { potForm.confirming = false; renderPotForm(); }
+  else closeSheet();
+});
+
+$("type-toggle").addEventListener("click", e => {
+  const b = e.target.closest("[data-type]"); if (!b) return;
+  sheet.type = b.dataset.type;
+  clearErrors();
+  renderSheet();
+});
+$("cat-choices").addEventListener("click", e => {
+  const b = e.target.closest("[data-cat]"); if (!b) return;
+  sheet.cat = b.dataset.cat;
+  const first = visibleSubsFor(sheet.cat)[0];
+  sheet.subId = first ? first.id : null;
+  drawCategoryChoices();
+});
+$("sub-choices").addEventListener("click", e => {
+  const b = e.target.closest("[data-sub]"); if (!b) return;
+  sheet.subId = Number(b.dataset.sub);
+  $("sub-error").hidden = true;
+  drawCategoryChoices();
+});
+$("source-choices").addEventListener("click", e => {
+  const b = e.target.closest("[data-source]"); if (!b) return;
+  $("source").value = b.dataset.source;
+  $("source-error").hidden = true;
+  drawSourceChoices();
+});
+$("source").addEventListener("input", drawSourceChoices);
+$("amount").addEventListener("input", () => { $("amount-error").hidden = true; updateSaveLabel(); });
+$("date-today").addEventListener("click", () => { sheet.date = todayISO(); drawDateChoices(); });
+$("date-yesterday").addEventListener("click", () => { sheet.date = yesterdayISO(); drawDateChoices(); });
+$("date-input").addEventListener("change", () => {
+  if ($("date-input").value) { sheet.date = $("date-input").value; $("date-error").hidden = true; }
+  drawDateChoices();
+});
+/* Pressing "Go"/Enter on the phone keyboard saves */
+["amount", "source", "note"].forEach(id => $(id).addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); saveSheet(); }
+}));
+
+/** Check the form, then save to the phone */
+async function saveSheet() {
+  clearErrors();
+  const amount = readAmount();
+  let ok = true;
+  if (amount.error) { showError("amount-error", amount.error); ok = false; }
+
+  const isIn = sheet.type === "in";
+  const source = clean($("source").value);
+  if (isIn && !source) { showError("source-error", "Add where the money came from, like Salary."); ok = false; }
+  if (!isIn && !state.subs.some(s => s.id === sheet.subId)) { showError("sub-error", "Pick a sub-category."); ok = false; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sheet.date)) { showError("date-error", "Pick a date."); ok = false; }
+  if (!ok) return;
+
+  const now = Date.now();
+  const old = sheet.mode === "edit" ? state.entries.find(e => e.id === sheet.id) : null;
+  const entry = {
+    type: sheet.type,
+    amount: amount.pence,
+    date: sheet.date,
+    note: clean($("note").value),
+    created: old ? old.created : now,
+    updated: now
+  };
+  if (isIn) entry.source = source;
+  else { entry.cat = sheet.cat; entry.subId = sheet.subId; }
+  if (old) entry.id = old.id;
+
+  try {
+    entry.id = await dbPut("entries", entry);
+  } catch (err) {
+    showError("form-error", "Couldn't save on this phone. Check Chrome isn't in incognito mode and has storage space, then try again.");
+    return;
+  }
+
+  // Update what's in memory to match what was saved
+  if (old) state.entries[state.entries.indexOf(old)] = entry;
+  else state.entries.push(entry);
+
+  // Remember the category for next time (saves taps)
+  if (!isIn) {
+    state.lastSpend = { key: "lastSpend", cat: entry.cat, subId: entry.subId };
+    dbPut("meta", state.lastSpend).catch(() => {});
+  }
+
+  closeSheet();
+  renderAll();
+  if (old) toast("Changes saved");
+  else toast(isIn ? `Added ${money(entry.amount)} from ${source}` : `Added ${money(entry.amount)} · ${subName(entry.subId)}`);
+}
+$("sheet-save").addEventListener("click", saveSheet);
+
+/* Delete: always ask first */
+$("sheet-delete").addEventListener("click", () => {
+  const entry = state.entries.find(e => e.id === sheet.id); if (!entry) return;
+  const what = entry.type === "in" ? entry.source : subName(entry.subId);
+  $("confirm-text").textContent = `Delete ${money(entry.amount)} · ${what} from ${ukFromISO(entry.date)}? This can't be undone.`;
+  sheet.confirming = true;
+  renderSheet();
+  $("confirm-cancel").focus();
+});
+$("confirm-cancel").addEventListener("click", () => { sheet.confirming = false; renderSheet(); });
+$("confirm-delete").addEventListener("click", async () => {
+  try {
+    await dbDelete("entries", sheet.id);
+  } catch (err) {
+    sheet.confirming = false; renderSheet();
+    showError("form-error", "Couldn't delete it. Please try again.");
+    return;
+  }
+  state.entries = state.entries.filter(e => e.id !== sheet.id);
+  closeSheet();
+  renderAll();
+  toast("Entry deleted");
+});
+
+/* ============================================================
+   H. SUB-CATEGORY MANAGEMENT (Settings)
+   ============================================================ */
+
+/** Check a sub-category name. Returns an error message, or "" if fine. */
+function checkSubName(cat, name, exceptId) {
+  if (!name) return "Type a name first.";
+  if (name.length > MAX_SUB_NAME) return `Keep names to ${MAX_SUB_NAME} characters or fewer.`;
+  const taken = subsFor(cat).find(s => s.id !== exceptId && s.name.toLowerCase() === name.toLowerCase());
+  if (taken) return `${catName(cat)} already has "${taken.name}"${taken.hidden ? " (hidden – tap Show to bring it back)" : ""}.`;
+  return "";
+}
+
+async function saveSub(sub, message) {
+  try {
+    const id = await dbPut("subcats", sub);
+    sub.id = id;
+  } catch (err) {
+    showError(`sub-err-${sub.cat}`, "Couldn't save on this phone. Please try again.");
+    return false;
+  }
+  const i = state.subs.findIndex(s => s.id === sub.id);
+  if (i >= 0) state.subs[i] = sub; else state.subs.push(sub);
+  state.renaming = null;
+  renderAll();
+  toast(message);
+  return true;
+}
+
+function addSub(cat) {
+  const name = clean($(`new-sub-${cat}`).value);
+  const problem = checkSubName(cat, name, null);
+  if (problem) { showError(`sub-err-${cat}`, problem); return; }
+  const order = Math.max(-1, ...state.subs.map(s => s.order)) + 1;
+  saveSub({ cat, name, hidden: false, order }, `Added "${name}" to ${catName(cat)}`);
+}
+
+function renameSub(id) {
+  const sub = state.subs.find(s => s.id === id); if (!sub) return;
+  const name = clean($(`rename-${id}`).value);
+  if (name === sub.name) { state.renaming = null; renderSettings(); return; }
+  const problem = checkSubName(sub.cat, name, id);
+  if (problem) { showError(`sub-err-${sub.cat}`, problem); return; }
+  saveSub({ ...sub, name }, `Renamed to "${name}"`);
+}
+
+function setHidden(id, hidden) {
+  const sub = state.subs.find(s => s.id === id); if (!sub) return;
+  saveSub({ ...sub, hidden }, hidden ? `"${sub.name}" hidden` : `"${sub.name}" shown again`);
+}
+
+$("subcat-manager").addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const id = Number(b.dataset.id);
+  switch (b.dataset.act) {
+    case "rename": {
+      state.renaming = id; renderSettings();
+      const input = $(`rename-${id}`); input.focus(); input.select();
+      break;
+    }
+    case "cancel-rename": state.renaming = null; renderSettings(); break;
+    case "save-rename":   renameSub(id); break;
+    case "hide":          setHidden(id, true); break;
+    case "show":          setHidden(id, false); break;
+    case "add":           addSub(b.dataset.cat); break;
+  }
+});
+$("subcat-manager").addEventListener("keydown", e => {
+  const input = e.target.closest("[data-enter]"); if (!input) return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (input.dataset.enter === "add") addSub(input.dataset.cat);
+    else renameSub(Number(input.dataset.id));
+  }
+  if (e.key === "Escape" && input.dataset.enter === "save-rename") { state.renaming = null; renderSettings(); }
+});
+
+/* ============================================================
+   H2. MONTHS: PLAN, WEEKLY CHECK-IN, THE FOUR QUESTIONS
+   ============================================================ */
+
+/** All entries in a month, e.g. entriesFor("2026-11") */
+function entriesFor(key) { return state.entries.filter(e => e.date.startsWith(key)); }
+/** The saved plan for a month, or null */
+function planFor(key) { const m = state.months[key]; return m && m.plan ? m.plan : null; }
+/** Total of a plan's fixed costs */
+function fixedTotal(plan) { return plan.fixed.reduce((sum, f) => sum + f.amount, 0); }
+/** Money left to spend in a plan: income − fixed costs − savings target */
+function toSpend(plan) { return plan.income - fixedTotal(plan) - plan.savings; }
+/** Number of days in a month */
+function daysIn(key) { const [y, m] = key.split("-").map(Number); return new Date(y, m, 0).getDate(); }
+/** Short month name, e.g. "November" */
+function monthName(key) { const [y, m] = key.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "long" }); }
+
+/* ---------- Plan card on the Months screen ---------- */
+function renderPlanCard(key) {
+  const plan = planFor(key);
+  $("plan-edit").hidden = !plan;
+  $("plan-edit").dataset.plan = key;
+  if (!plan) {
+    $("plan-body").innerHTML = `
+      <p class="small muted">No plan for ${esc(monthLabel(key))} yet. Enter your income, fixed costs and savings target, then split what's left into envelopes.</p>
+      <button class="primary" type="button" data-plan="${key}">Plan ${esc(monthName(key))}</button>`;
+    return;
+  }
+  const left = toSpend(plan);
+  const n = plan.fixed.length;
+  $("plan-body").innerHTML = `
+    <dl class="summary num">
+      <div class="summary-row"><dt>Income</dt><dd>${money(plan.income)}</dd></div>
+      <div class="summary-row"><dt>Fixed costs${n ? ` (${n})` : ""}</dt><dd>− ${money(fixedTotal(plan))}</dd></div>
+      <div class="summary-row"><dt>Savings target</dt><dd>− ${money(plan.savings)}</dd></div>
+      <div class="summary-row total"><dt>To spend</dt><dd>${money(left)}</dd></div>
+    </dl>`;
+}
+
+/* ---------- Weekly check-in ---------- */
+/* Weeks are 7-day blocks from the 1st: 1–7, 8–14, 15–21, 22–28, 29–end */
+function renderCheckin(key) {
+  const plan = planFor(key);
+  $("checkin-card").hidden = !plan;
+  if (!plan) return;
+
+  const days = daysIn(key);
+  const weeks = Math.ceil(days / 7);
+  const nowKey = monthKey(new Date());
+  if (state.weekFor !== key) {
+    state.weekFor = key;
+    state.week = key === nowKey ? Math.ceil(new Date().getDate() / 7) : (key < nowKey ? weeks : 1);
+  }
+  const mm = key.slice(5);
+  $("week-choices").innerHTML = Array.from({ length: weeks }, (_, i) => {
+    const w = i + 1, start = i * 7 + 1, end = Math.min(w * 7, days);
+    return `<button type="button" class="choice num" data-week="${w}" aria-pressed="${w === state.week}" aria-label="Week ${w}, ${start} to ${end} ${esc(monthName(key))}">${start}–${end}</button>`;
+  }).join("");
+
+  const start = (state.week - 1) * 7 + 1;
+  const end = Math.min(state.week * 7, days);
+  const spends = entriesFor(key).filter(e => e.type === "spend");
+  const day = e => Number(e.date.slice(8, 10));
+
+  const rows = CATS.map(c => {
+    const budget = plan.budgets[c.key] || 0;
+    const mine = spends.filter(e => e.cat === c.key);
+    const soFar = total(mine.filter(e => day(e) <= end));
+    const thisWeek = total(mine.filter(e => day(e) >= start && day(e) <= end));
+    const pace = Math.round(budget * end / days);   // where you'd be if spending evenly
+    let status = "On track", cls = "";
+    if (soFar > budget) { status = "Over budget"; cls = "over"; }
+    else if (soFar > pace) { status = "Spending fast"; cls = "fast"; }
+    const pct = budget > 0 ? Math.min(100, Math.round((soFar / budget) * 100)) : (soFar > 0 ? 100 : 0);
+    return `
+      <li class="check-row c-${c.key}">
+        <span class="chip"><span class="dot"></span>${esc(c.name)}</span>
+        <span class="status ${cls}">${status}</span>
+        <div class="bar ${cls === "over" ? "over" : ""}" aria-hidden="true"><span style="--fill:${pct}%"></span></div>
+        <div class="meta num"><span>${money(soFar)} of ${money(budget)}</span><span>${money(thisWeek)} this week</span></div>
+      </li>`;
+  }).join("");
+
+  const allSoFar = total(spends.filter(e => day(e) <= end));
+  const pot = toSpend(plan);
+  $("checkin-body").innerHTML = `
+    <p class="small muted num">Week ${state.week}: ${pad(start)}/${mm} to ${pad(end)}/${mm}. Totals are from the 1st to the end of this week.</p>
+    <ul class="check-rows">${rows}</ul>
+    <dl class="summary num">
+      <div class="summary-row total"><dt>Spent so far</dt><dd class="${allSoFar > pot ? "over" : ""}">${money(allSoFar)} of ${money(pot)}</dd></div>
+    </dl>`;
+}
+$("week-choices").addEventListener("click", e => {
+  const b = e.target.closest("[data-week]"); if (!b) return;
+  state.week = Number(b.dataset.week);
+  renderCheckin(state.viewMonth);
+});
+
+/* ---------- The four questions, read back ---------- */
+function renderReviewCard(key) {
+  const m = state.months[key];
+  const r = m && m.review;
+  $("review-edit").hidden = !r;
+  $("review-edit").dataset.review = key;
+  if (!r) {
+    const isCurrent = key === monthKey(new Date());
+    $("review-body").innerHTML = `
+      <p class="small muted">${isCurrent ? "At the end of the month, answer" : "Answer"} the four Kakeibo questions to close ${esc(monthName(key))}.</p>
+      <button class="secondary-btn" type="button" data-review="${key}">Answer the questions</button>`;
+    return;
+  }
+  const result = r.had - r.spent;
+  $("review-body").innerHTML = `
+    <div class="qa-list">
+      <div class="qa"><span class="q">How much did I have?</span><span class="a num">${money(r.had)}</span></div>
+      <div class="qa"><span class="q">How much did I want to save?</span><span class="a num">${money(r.wantedSave)}</span></div>
+      <div class="qa"><span class="q">How much did I spend?</span><span class="a num">${money(r.spent)}</span></div>
+      <div class="qa"><span class="q">${result >= 0 ? "Left over" : "Short by"}</span><span class="a num" style="color:${result >= 0 ? "var(--gold)" : "var(--over)"}">${money(Math.abs(result))}</span></div>
+      <div class="qa"><span class="q">How can I improve?</span><span class="a text">${esc(r.improve)}</span></div>
+    </div>
+    <p class="small dim num">Saved ${ukDate(new Date(r.saved))}</p>`;
+}
+
+/* Buttons anywhere that open the plan, the questions or the check-in */
+document.addEventListener("click", e => {
+  const p = e.target.closest("[data-plan]");
+  if (p) { openPlan(p.dataset.plan === "current" ? monthKey(new Date()) : p.dataset.plan); return; }
+  const r = e.target.closest("[data-review]");
+  if (r) { openReview(r.dataset.review); return; }
+  if (e.target.closest("[data-checkin]")) {
+    state.viewMonth = monthKey(new Date());
+    renderMonths();
+    showTab("months");
+    $("checkin-card").scrollIntoView({ block: "start" });
+  }
+});
+
+/* ---------- Plan sheet ---------- */
+let planKey = null;        // month being planned
+let planFixed = [];        // fixed cost rows as typed: [{ name, amount }]
+
+/** The most recent plan before this month, to copy from */
+function previousPlan(key) {
+  const keys = Object.keys(state.months).filter(k => k < key && state.months[k].plan).sort();
+  return keys.length ? state.months[keys[keys.length - 1]].plan : null;
+}
+
+function openPlan(key) {
+  planKey = key;
+  const existing = planFor(key);
+  const start = existing || previousPlan(key);   // copy last month's plan to save typing
+  const loggedIn = total(entriesFor(key).filter(e => e.type === "in"));
+
+  $("plan-title").textContent = `Plan ${monthLabel(key)}`;
+  $("plan-income").value = toBox(existing ? existing.income : (loggedIn || (start ? start.income : 0)));
+  $("plan-income-hint").hidden = !loggedIn;
+  $("plan-income-hint").textContent = `Money in logged so far: ${money(loggedIn)}`;
+  $("plan-savings").value = toBox(start ? start.savings : 0);
+  planFixed = start && start.fixed.length
+    ? start.fixed.map(f => ({ name: f.name, amount: toBox(f.amount) }))
+    : [{ name: "", amount: "" }];
+
+  $("budget-rows").innerHTML = CATS.map(c => `
+    <div class="env-input c-${c.key}">
+      <label class="chip" for="budget-${c.key}"><span class="dot"></span>${esc(c.name)}</label>
+      <div class="money-input"><input class="text-input" id="budget-${c.key}" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" autocomplete="off" value="${toBox(start ? start.budgets[c.key] : 0)}"></div>
+    </div>`).join("");
+
+  ["plan-income-error", "plan-fixed-error", "plan-savings-error", "plan-budget-error", "plan-form-error"].forEach(id => { $(id).hidden = true; });
+  drawFixedRows();
+  updatePlanTotals();
+  showPanel("plan-sheet");
+}
+
+function drawFixedRows() {
+  $("fixed-rows").innerHTML = planFixed.map((r, i) => `
+    <div class="fixed-row">
+      <input class="text-input" type="text" maxlength="30" placeholder="e.g. Rent" value="${esc(r.name)}" data-fixed="${i}" data-field="name" aria-label="Fixed cost ${i + 1} name">
+      <div class="money-input"><input class="text-input" type="text" inputmode="decimal" maxlength="12" placeholder="0.00" value="${esc(r.amount)}" data-fixed="${i}" data-field="amount" aria-label="Fixed cost ${i + 1} amount"></div>
+      <button type="button" class="icon-btn" data-remove-fixed="${i}" aria-label="Remove fixed cost ${i + 1}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>`).join("");
+}
+
+/** Recalculate "left to spend" and "still to share out" as you type */
+function updatePlanTotals() {
+  const income = looseMoney($("plan-income").value);
+  const fixed = planFixed.reduce((sum, r) => sum + looseMoney(r.amount), 0);
+  const savings = looseMoney($("plan-savings").value);
+  const left = income - fixed - savings;
+  const shared = CATS.reduce((sum, c) => sum + looseMoney($(`budget-${c.key}`).value), 0);
+  const unshared = left - shared;
+
+  $("plan-left").textContent = money(left);
+  $("plan-left-box").classList.toggle("bad", left < 0);
+  const hint = $("plan-unshared");
+  hint.classList.toggle("bad", unshared < 0);
+  if (unshared > 0) hint.textContent = `${money(unshared)} still to share out`;
+  else if (unshared === 0) hint.textContent = left > 0 ? "All shared out" : "";
+  else hint.textContent = `Your envelopes are ${money(-unshared)} more than you have to spend`;
+}
+
+$("plan-sheet").addEventListener("input", e => {
+  const f = e.target.closest("[data-fixed]");
+  if (f) planFixed[Number(f.dataset.fixed)][f.dataset.field] = f.value;
+  updatePlanTotals();
+});
+$("fixed-rows").addEventListener("click", e => {
+  const b = e.target.closest("[data-remove-fixed]"); if (!b) return;
+  planFixed.splice(Number(b.dataset.removeFixed), 1);
+  if (!planFixed.length) planFixed.push({ name: "", amount: "" });
+  drawFixedRows();
+  updatePlanTotals();
+});
+$("fixed-add").addEventListener("click", () => {
+  planFixed.push({ name: "", amount: "" });
+  drawFixedRows();
+  $("fixed-rows").querySelector(`[data-fixed="${planFixed.length - 1}"][data-field="name"]`).focus();
+});
+
+async function savePlan() {
+  ["plan-income-error", "plan-fixed-error", "plan-savings-error", "plan-budget-error", "plan-form-error"].forEach(id => { $(id).hidden = true; });
+  let ok = true;
+
+  const income = parseMoney($("plan-income").value);
+  if (income.error) { showError("plan-income-error", income.error); ok = false; }
+
+  const fixed = [];
+  for (const [i, r] of planFixed.entries()) {
+    const name = clean(r.name);
+    const raw = String(r.amount).trim();
+    if (!name && !raw) continue;                         // empty row: ignore it
+    if (!name) { showError("plan-fixed-error", `Fixed cost ${i + 1}: add a name, like Rent.`); ok = false; break; }
+    const a = parseMoney(raw);
+    if (a.error) { showError("plan-fixed-error", `${name}: ${a.error}`); ok = false; break; }
+    fixed.push({ name, amount: a.pence });
+  }
+
+  const savings = parseMoney($("plan-savings").value, { required: false, allowZero: true });
+  if (savings.error) { showError("plan-savings-error", savings.error); ok = false; }
+
+  const budgets = {};
+  for (const c of CATS) {
+    const b = parseMoney($(`budget-${c.key}`).value, { required: false, allowZero: true });
+    if (b.error) { showError("plan-budget-error", `${c.name}: ${b.error}`); ok = false; break; }
+    budgets[c.key] = b.pence;
+  }
+  if (!ok) return;
+
+  const plan = { income: income.pence, fixed, savings: savings.pence, budgets, updated: Date.now() };
+  const left = toSpend(plan);
+  if (left < 0) {
+    showError("plan-form-error", "Your fixed costs and savings target add up to more than your income. Lower one of them, or check the income.");
+    return;
+  }
+  const shared = CATS.reduce((sum, c) => sum + budgets[c.key], 0);
+  if (shared > left) {
+    showError("plan-budget-error", `Your envelopes add up to ${money(shared)}, which is ${money(shared - left)} more than you have to spend.`);
+    return;
+  }
+
+  const record = { ...(state.months[planKey] || {}), key: planKey, plan };
+  try { await dbPut("months", record); }
+  catch (err) { showError("plan-form-error", "Couldn't save on this phone. Please try again."); return; }
+  state.months[planKey] = record;
+  closeSheet();
+  renderAll();
+  toast(`${monthLabel(planKey)} plan saved`);
+}
+$("plan-save").addEventListener("click", savePlan);
+
+/* ---------- The four questions sheet ---------- */
+let reviewKey = null;
+
+function openReview(key) {
+  reviewKey = key;
+  const m = state.months[key] || {};
+  const r = m.review;
+  const plan = m.plan;
+  const month = entriesFor(key);
+  const loggedIn = total(month.filter(e => e.type === "in"));
+  const loggedSpent = total(month.filter(e => e.type === "spend"));
+  const fixed = plan ? fixedTotal(plan) : 0;
+
+  $("review-title").textContent = `${monthLabel(key)} review`;
+  $("rv-had").value = toBox(r ? r.had : (loggedIn || (plan ? plan.income : 0)));
+  $("rv-save").value = toBox(r ? r.wantedSave : (plan ? plan.savings : 0));
+  $("rv-spent").value = toBox(r ? r.spent : fixed + loggedSpent);
+  $("rv-improve").value = r ? r.improve : "";
+  $("rv-had-hint").textContent = `Money in logged: ${money(loggedIn)}${plan ? ` · planned income: ${money(plan.income)}` : ""}`;
+  $("rv-spent-hint").textContent = plan
+    ? `Fixed costs ${money(fixed)} + logged spending ${money(loggedSpent)}`
+    : `Logged spending ${money(loggedSpent)}`;
+  ["rv-had-error", "rv-save-error", "rv-spent-error", "rv-improve-error", "rv-form-error"].forEach(id => { $(id).hidden = true; });
+  updateReviewResult();
+  showPanel("review-sheet");
+}
+
+/** Live "left over" figure: what you had minus what you spent, against your target */
+function updateReviewResult() {
+  const result = looseMoney($("rv-had").value) - looseMoney($("rv-spent").value);
+  const target = looseMoney($("rv-save").value);
+  $("rv-result-label").textContent = result >= 0 ? "Left over" : "Short by";
+  $("rv-result").textContent = money(Math.abs(result));
+  $("rv-result-box").classList.toggle("bad", result < 0);
+  if (!target) $("rv-result-note").textContent = "";
+  else if (result >= target) $("rv-result-note").textContent = `That meets your savings target of ${money(target)}.`;
+  else $("rv-result-note").textContent = `That's ${money(target - Math.max(result, 0))} short of your savings target of ${money(target)}.`;
+}
+["rv-had", "rv-save", "rv-spent"].forEach(id => $(id).addEventListener("input", updateReviewResult));
+
+async function saveReview() {
+  ["rv-had-error", "rv-save-error", "rv-spent-error", "rv-improve-error", "rv-form-error"].forEach(id => { $(id).hidden = true; });
+  let ok = true;
+  const had = parseMoney($("rv-had").value, { allowZero: true });
+  if (had.error) { showError("rv-had-error", had.error); ok = false; }
+  const wanted = parseMoney($("rv-save").value, { allowZero: true });
+  if (wanted.error) { showError("rv-save-error", wanted.error); ok = false; }
+  const spent = parseMoney($("rv-spent").value, { allowZero: true });
+  if (spent.error) { showError("rv-spent-error", spent.error); ok = false; }
+  const improve = $("rv-improve").value.trim();
+  if (!improve) { showError("rv-improve-error", "Write at least one thing you'd like to do differently."); ok = false; }
+  if (!ok) return;
+
+  const review = { had: had.pence, wantedSave: wanted.pence, spent: spent.pence, improve, saved: Date.now() };
+  const record = { ...(state.months[reviewKey] || {}), key: reviewKey, review };
+  try { await dbPut("months", record); }
+  catch (err) { showError("rv-form-error", "Couldn't save on this phone. Please try again."); return; }
+  state.months[reviewKey] = record;
+  closeSheet();
+  renderAll();
+  toast(`${monthName(reviewKey)} answers saved`);
+}
+$("rv-save-btn").addEventListener("click", saveReview);
+
+/* ============================================================
+   H3. SAVINGS POT
+   One starting balance, then deposits and withdrawals.
+   Balance = starting balance + deposits − withdrawals.
+   ============================================================ */
+
+function potStart() { return state.pot.find(p => p.type === "start") || null; }
+/** Deposits count up, withdrawals count down */
+function potSigned(p) { return p.type === "withdraw" ? -p.amount : p.amount; }
+function potBalance(list = state.pot) { return list.reduce((sum, p) => sum + potSigned(p), 0); }
+/** Deposits minus withdrawals in one month (not counting the starting balance) */
+function potMonthNet(key) {
+  return state.pot.filter(p => p.type !== "start" && p.date.startsWith(key)).reduce((sum, p) => sum + potSigned(p), 0);
+}
+/** Oldest first, with the starting balance always at the very start */
+function potOldestFirst(a, b) {
+  if (a.type === "start") return -1;
+  if (b.type === "start") return 1;
+  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+  return (a.created || 0) - (b.created || 0);
+}
+/** "+£400.00", "−£50.00" or "£3,000.00" */
+function potAmountText(p) {
+  if (p.type === "deposit") return `+${money(p.amount)}`;
+  if (p.type === "withdraw") return `−${money(p.amount)}`;
+  return money(p.amount);
+}
+
+function renderSavings() {
+  const start = potStart();
+  $("pot-setup").hidden = !!start;
+  $("pot-hero").hidden = !start;
+  $("pot-history-card").hidden = !start;
+  if (!start) return;
+
+  const balance = potBalance();
+  const [pounds, pence] = money(balance).split(".");
+  $("pot-balance").innerHTML = `${esc(pounds)}<span class="pence">.${esc(pence)}</span>`;
+
+  const thisMonth = monthKey(new Date());
+  const net = potMonthNet(thisMonth);
+  $("pot-sub").textContent = net
+    ? `${net > 0 ? "+" : "−"}${money(Math.abs(net))} this month`
+    : `Started ${ukFromISO(start.date)} with ${money(start.amount)}`;
+
+  // Progress against this month's savings target, if there's a plan
+  const plan = planFor(thisMonth);
+  const deposited = total(state.pot.filter(p => p.type === "deposit" && p.date.startsWith(thisMonth)));
+  $("pot-target").hidden = !(plan && plan.savings);
+  if (plan && plan.savings) {
+    $("pot-target").textContent = deposited >= plan.savings
+      ? `${monthName(thisMonth)} target of ${money(plan.savings)} met`
+      : `${money(deposited)} of your ${money(plan.savings)} target moved in this month`;
+    $("pot-target").style.color = deposited >= plan.savings ? "var(--gold)" : "var(--mist)";
+  }
+
+  // History, newest first, with the balance after each line
+  let running = 0;
+  const lines = [...state.pot].sort(potOldestFirst).map(p => ({ p, after: (running += potSigned(p)) })).reverse();
+  $("pot-history").innerHTML = lines.map(({ p, after }) => {
+    let title, details;
+    if (p.type === "start") { title = "Starting balance"; details = ukFromISO(p.date); }
+    else if (p.type === "deposit") { title = "Deposit"; details = ukFromISO(p.date) + (p.note ? " · " + p.note : ""); }
+    else { title = p.reason; details = "Withdrawal · " + ukFromISO(p.date); }
+    return `
+      <li>
+        <button type="button" class="tx ${p.type === "withdraw" ? "" : "c-in"}" data-pot-edit="${p.id}">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="tx-main">
+            <span class="tx-title">${esc(title)}</span>
+            <span class="tx-sub num">${esc(details)}</span>
+          </span>
+          <span class="tx-right">
+            <span class="tx-amount num ${p.type === "deposit" ? "is-in" : ""}">${potAmountText(p)}</span>
+            <span class="tx-bal num">${money(after)}</span>
+          </span>
+          ${CHEVRON}
+        </button>
+      </li>`;
+  }).join("");
+}
+
+/* ---------- The savings sheet ---------- */
+const potForm = {
+  mode: "add",          // "add" or "edit"
+  type: "deposit",      // "start", "deposit" or "withdraw"
+  id: null,
+  date: todayISO(),
+  confirming: false
+};
+
+function openPot(type, record) {
+  ["pot-amount-error", "pot-reason-error", "pot-form-error"].forEach(id => { $(id).hidden = true; });
+  potForm.confirming = false;
+  if (record) {
+    potForm.mode = "edit";
+    potForm.id = record.id;
+    potForm.type = record.type;
+    potForm.date = record.date;
+    $("pot-amount").value = (record.amount / 100).toFixed(2);
+    $("pot-reason").value = record.reason || record.note || "";
+  } else {
+    // Only one starting balance: if it exists, edit it instead of adding another
+    if (type === "start" && potStart()) { openPot("start", potStart()); return; }
+    potForm.mode = "add";
+    potForm.id = null;
+    potForm.type = type;
+    potForm.date = todayISO();
+    $("pot-amount").value = "";
+    $("pot-reason").value = "";
+  }
+  renderPotForm();
+  showPanel("pot-sheet");
+  if (!record) setTimeout(() => $("pot-amount").focus(), 30);
+}
+
+function renderPotForm() {
+  const t = potForm.type;
+  const editing = potForm.mode === "edit";
+  const titles = {
+    start:    editing ? "Edit starting balance" : "Starting balance",
+    deposit:  editing ? "Edit deposit" : "Add to savings",
+    withdraw: editing ? "Edit withdrawal" : "Take out of savings"
+  };
+  $("pot-title").textContent = titles[t];
+  $("pot-toggle").hidden = t === "start" || editing;
+  document.querySelectorAll("#pot-toggle [data-ptype]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.ptype === t)));
+
+  // Hint and quick-fill suggestion under the amount
+  const hint = $("pot-hint");
+  hint.hidden = true;
+  $("pot-suggest").innerHTML = "";
+  if (t === "start") {
+    hint.textContent = "What's in your savings on the date below.";
+    hint.hidden = false;
+  } else if (t === "deposit" && !editing) {
+    const key = monthKey(new Date());
+    const plan = planFor(key);
+    const deposited = total(state.pot.filter(p => p.type === "deposit" && p.date.startsWith(key)));
+    const due = plan ? plan.savings - deposited : 0;
+    if (due > 0) $("pot-suggest").innerHTML = `<button type="button" class="choice c-in num" data-fill="${due}"><span class="dot"></span>Rest of this month's target: ${money(due)}</button>`;
+  } else if (t === "withdraw") {
+    const available = potBalance(state.pot.filter(p => p.id !== potForm.id));
+    hint.textContent = `${money(available)} in your pot`;
+    hint.hidden = false;
+  }
+
+  // "What for?" is required for withdrawals; deposits get an optional note
+  $("pot-reason-field").hidden = t === "start";
+  $("pot-reason-label").innerHTML = t === "withdraw"
+    ? "What for?"
+    : `Note <span class="dim" style="text-transform:none;letter-spacing:0">(optional)</span>`;
+  $("pot-reason").placeholder = t === "withdraw" ? "e.g. Car insurance" : "";
+  if (t === "withdraw") {
+    const seen = [];
+    for (const p of [...state.pot].sort(potOldestFirst).reverse()) {
+      if (p.type === "withdraw" && !seen.some(s => s.toLowerCase() === p.reason.toLowerCase())) seen.push(p.reason);
+      if (seen.length === 4) break;
+    }
+    $("pot-reason-choices").innerHTML = seen.map(s => `<button type="button" class="choice" data-preason="${esc(s)}">${esc(s)}</button>`).join("");
+  } else {
+    $("pot-reason-choices").innerHTML = "";
+  }
+
+  // Date chips
+  const isToday = potForm.date === todayISO();
+  const isYesterday = potForm.date === yesterdayISO();
+  $("pot-date-today").setAttribute("aria-pressed", String(isToday));
+  $("pot-date-yesterday").setAttribute("aria-pressed", String(isYesterday));
+  $("pot-date-other").setAttribute("aria-pressed", String(!isToday && !isYesterday));
+  $("pot-date-other-text").textContent = (!isToday && !isYesterday) ? ukFromISO(potForm.date) : "Other date";
+  $("pot-date-input").value = potForm.date;
+
+  $("pot-delete").hidden = !editing || t === "start";   // the starting balance can be changed, not deleted
+  $("pot-delete").textContent = t === "withdraw" ? "Delete this withdrawal" : "Delete this deposit";
+  $("pot-actions").hidden = potForm.confirming;
+  $("pot-confirm").hidden = !potForm.confirming;
+  updatePotSaveLabel();
+}
+
+function updatePotSaveLabel() {
+  const t = potForm.type;
+  if (potForm.mode === "edit") { $("pot-save").textContent = "Save changes"; return; }
+  if (t === "start") { $("pot-save").textContent = "Save starting balance"; return; }
+  const pence = looseMoney($("pot-amount").value);
+  $("pot-save").textContent = `${t === "withdraw" ? "Withdraw" : "Add"} ${money(pence)}`;
+}
+
+async function savePot() {
+  ["pot-amount-error", "pot-reason-error", "pot-form-error"].forEach(id => { $(id).hidden = true; });
+  const t = potForm.type;
+  let ok = true;
+  const amount = parseMoney($("pot-amount").value, { allowZero: t === "start" });
+  if (amount.error) { showError("pot-amount-error", amount.error); ok = false; }
+  const text = clean($("pot-reason").value);
+  if (t === "withdraw" && !text) { showError("pot-reason-error", "Say what the money is for, like Car insurance."); ok = false; }
+  if (!ok) return;
+
+  const now = Date.now();
+  const old = potForm.mode === "edit" ? state.pot.find(p => p.id === potForm.id) : null;
+  const record = { type: t, amount: amount.pence, date: potForm.date, created: old ? old.created : now, updated: now };
+  if (t === "withdraw") record.reason = text;
+  if (t === "deposit" && text) record.note = text;
+  if (old) record.id = old.id;
+
+  // The pot can't go below £0.00
+  const others = state.pot.filter(p => !old || p.id !== old.id);
+  if (potBalance(others) + potSigned(record) < 0) {
+    showError("pot-amount-error", t === "withdraw"
+      ? `That's more than the ${money(potBalance(others))} in your pot.`
+      : "That would leave your pot below £0.00 after your withdrawals.");
+    return;
+  }
+
+  try { record.id = await dbPut("savings", record); }
+  catch (err) { showError("pot-form-error", "Couldn't save on this phone. Please try again."); return; }
+  if (old) state.pot[state.pot.indexOf(old)] = record; else state.pot.push(record);
+
+  closeSheet();
+  renderAll();
+  if (old) toast("Changes saved");
+  else if (t === "start") toast("Savings pot set up");
+  else if (t === "deposit") toast(`${money(record.amount)} added to savings`);
+  else toast(`${money(record.amount)} taken out for ${record.reason}`);
+}
+
+/* Savings sheet controls */
+document.addEventListener("click", e => {
+  const n = e.target.closest("[data-pot-new]");
+  if (n) { openPot(n.dataset.potNew); return; }
+  const r = e.target.closest("[data-pot-edit]");
+  if (r) { const rec = state.pot.find(p => p.id === Number(r.dataset.potEdit)); if (rec) openPot(rec.type, rec); }
+});
+$("pot-toggle").addEventListener("click", e => {
+  const b = e.target.closest("[data-ptype]"); if (!b) return;
+  potForm.type = b.dataset.ptype;
+  ["pot-amount-error", "pot-reason-error"].forEach(id => { $(id).hidden = true; });
+  renderPotForm();
+});
+$("pot-suggest").addEventListener("click", e => {
+  const b = e.target.closest("[data-fill]"); if (!b) return;
+  $("pot-amount").value = toBox(Number(b.dataset.fill));
+  updatePotSaveLabel();
+});
+$("pot-reason-choices").addEventListener("click", e => {
+  const b = e.target.closest("[data-preason]"); if (!b) return;
+  $("pot-reason").value = b.dataset.preason;
+  $("pot-reason-error").hidden = true;
+});
+$("pot-amount").addEventListener("input", () => { $("pot-amount-error").hidden = true; updatePotSaveLabel(); });
+$("pot-date-today").addEventListener("click", () => { potForm.date = todayISO(); renderPotForm(); });
+$("pot-date-yesterday").addEventListener("click", () => { potForm.date = yesterdayISO(); renderPotForm(); });
+$("pot-date-input").addEventListener("change", () => {
+  if ($("pot-date-input").value) potForm.date = $("pot-date-input").value;
+  renderPotForm();
+});
+["pot-amount", "pot-reason"].forEach(id => $(id).addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); savePot(); }
+}));
+$("pot-save").addEventListener("click", savePot);
+
+/* Delete a deposit or withdrawal: always ask first */
+$("pot-delete").addEventListener("click", () => {
+  const rec = state.pot.find(p => p.id === potForm.id); if (!rec) return;
+  const what = rec.type === "withdraw" ? `withdrawal of ${money(rec.amount)} for ${rec.reason}` : `deposit of ${money(rec.amount)}`;
+  $("pot-confirm-text").textContent = `Delete this ${what} from ${ukFromISO(rec.date)}? This can't be undone.`;
+  potForm.confirming = true;
+  renderPotForm();
+  $("pot-confirm-cancel").focus();
+});
+$("pot-confirm-cancel").addEventListener("click", () => { potForm.confirming = false; renderPotForm(); });
+$("pot-confirm-delete").addEventListener("click", async () => {
+  const rec = state.pot.find(p => p.id === potForm.id); if (!rec) return;
+  const rest = state.pot.filter(p => p.id !== rec.id);
+  if (potBalance(rest) < 0) {
+    potForm.confirming = false; renderPotForm();
+    showError("pot-form-error", "Deleting this deposit would leave your pot below £0.00. Change or delete a withdrawal first.");
+    return;
+  }
+  try { await dbDelete("savings", rec.id); }
+  catch (err) { potForm.confirming = false; renderPotForm(); showError("pot-form-error", "Couldn't delete it. Please try again."); return; }
+  state.pot = rest;
+  closeSheet();
+  renderAll();
+  toast(rec.type === "withdraw" ? "Withdrawal deleted" : "Deposit deleted");
+});
+
+/* ============================================================
+   H4. BACKUP, RESTORE, CSV EXPORT AND THE 30-DAY REMINDER
+   ============================================================ */
+const BACKUP_FORMAT = 1;                 // goes up if the backup file layout ever changes
+const REMIND_AFTER_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STORES = ["entries", "subcats", "meta", "months", "savings"];
+
+/** Whole days between a time and now */
+function daysSince(ms) { return Math.floor((Date.now() - ms) / DAY_MS); }
+
+/** When the next reminder is due (milliseconds), or null */
+function reminderDue() {
+  const from = state.lastBackup || state.firstUse;
+  return from ? from + REMIND_AFTER_DAYS * DAY_MS : null;
+}
+
+function renderBackup() {
+  // Settings: when you last backed up, and when you'll next be reminded
+  if (state.lastBackup) {
+    const d = daysSince(state.lastBackup);
+    const ago = d === 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
+    $("backup-status").textContent = `Last backup: ${ukDate(new Date(state.lastBackup))} (${ago})`;
+  } else {
+    $("backup-status").textContent = "Never backed up";
+  }
+  const due = reminderDue();
+  $("backup-next").textContent = due ? `Reminder on Home from ${ukDate(new Date(due))} if you haven't backed up` : "";
+
+  // Home: show the reminder once 30 days have passed (unless "Not now" was tapped)
+  const hasData = state.entries.length || state.pot.length || Object.keys(state.months).length;
+  const show = !!(hasData && due && Date.now() >= due && !state.reminderSnoozed);
+  $("backup-reminder").hidden = !show;
+  if (show) {
+    $("backup-reminder-text").textContent = state.lastBackup
+      ? `It's ${daysSince(state.lastBackup)} days since your last backup. Save one to Google Drive so your data is safe.`
+      : "You haven't backed up yet. Save a backup to Google Drive so your data is safe.";
+  }
+}
+$("reminder-later").addEventListener("click", () => { state.reminderSnoozed = true; renderBackup(); });
+
+/**
+ * Hand a file to the phone. Tries, in order:
+ *   1. Android's share menu (pick Drive, then Save)
+ *   2. A normal browser download, if sharing files isn't available
+ * Returns "done" or "cancelled".
+ */
+async function offerFile(filename, text, mime) {
+  const file = new File([text], filename, { type: mime });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: filename }); return "done"; }
+    catch (err) { if (err && err.name === "AbortError") return "cancelled"; /* share not allowed here: try the next way */ }
+  }
+
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return "done";
+}
+
+/** Everything in the app, as one backup object */
+function buildBackup() {
+  const meta = state.lastSpend ? [state.lastSpend] : [];
+  return {
+    app: "kakeibo",
+    format: BACKUP_FORMAT,
+    exported: new Date().toISOString(),
+    data: {
+      entries: state.entries,
+      subcats: state.subs,
+      months: Object.values(state.months),
+      savings: state.pot,
+      meta
+    }
+  };
+}
+
+async function doBackup() {
+  $("backup-error").hidden = true;
+  const json = JSON.stringify(buildBackup(), null, 1);
+  const result = await offerFile(`kakeibo-backup-${todayISO()}.json`, json, "application/json");
+  if (result !== "done") { toast("Backup cancelled"); return; }
+  state.lastBackup = Date.now();
+  state.reminderSnoozed = false;
+  dbPut("meta", { key: "lastBackup", at: state.lastBackup }).catch(() => {});
+  renderBackup();
+  toast("Backup saved");
+}
+document.addEventListener("click", e => { if (e.target.closest("[data-backup]")) doBackup(); });
+
+/* ---------- CSV export of money in and spending ---------- */
+/** One spreadsheet cell: quoted, and protected from being read as a formula */
+function csvCell(value) {
+  let s = String(value == null ? "" : value);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+async function exportCsv() {
+  $("backup-error").hidden = true;
+  if (!state.entries.length) { showError("backup-error", "There's nothing to export yet."); return; }
+  const header = ["Date", "Type", "Amount (£)", "Category", "Sub-category", "Source", "Note"];
+  const rows = [...state.entries].sort(newestFirst).reverse().map(e => [
+    ukFromISO(e.date),
+    e.type === "in" ? "Money in" : "Spending",
+    (e.amount / 100).toFixed(2),
+    e.type === "spend" ? catName(e.cat) : "",
+    e.type === "spend" ? subName(e.subId) : "",
+    e.type === "in" ? e.source : "",
+    e.note || ""
+  ]);
+  // The ﻿ at the start helps Excel read the £ sign correctly
+  const csv = "﻿" + [header, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const result = await offerFile(`kakeibo-transactions-${todayISO()}.csv`, csv, "text/csv");
+  toast(result === "done" ? "CSV exported" : "Export cancelled");
+}
+$("csv-btn").addEventListener("click", exportCsv);
+
+/* ---------- Restore ---------- */
+let pendingRestore = null;   // a checked backup waiting for you to confirm
+
+const isISODate = s => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const isPence = (n, allowZero) => Number.isInteger(n) && n <= MAX_AMOUNT && (allowZero ? n >= 0 : n > 0);
+const isId = n => Number.isInteger(n) && n > 0;
+const isText = s => typeof s === "string" && s.trim().length > 0;
+const isCat = k => CATS.some(c => c.key === k);
+
+/** Check a backup file thoroughly before anything is changed. Returns the data, or throws. */
+function checkBackup(obj) {
+  if (!obj || obj.app !== "kakeibo" || !obj.data || typeof obj.data !== "object") throw new Error("not a backup");
+  if (typeof obj.format !== "number" || obj.format > BACKUP_FORMAT) throw new Error("newer format");
+  const d = obj.data;
+  for (const k of ["entries", "subcats", "months", "savings"]) if (!Array.isArray(d[k])) throw new Error("missing " + k);
+  const meta = Array.isArray(d.meta) ? d.meta : [];
+
+  const subIds = new Set();
+  for (const s of d.subcats) {
+    if (!isId(s.id) || !isCat(s.cat) || !isText(s.name) || typeof s.hidden !== "boolean" || !Number.isFinite(s.order)) throw new Error("bad sub-category");
+    subIds.add(s.id);
+  }
+  for (const e of d.entries) {
+    if (!isId(e.id) || !isPence(e.amount) || !isISODate(e.date)) throw new Error("bad entry");
+    if (e.type === "spend") { if (!isCat(e.cat) || !subIds.has(e.subId)) throw new Error("bad spending"); }
+    else if (e.type === "in") { if (!isText(e.source)) throw new Error("bad money in"); }
+    else throw new Error("bad entry type");
+  }
+  for (const m of d.months) {
+    if (typeof m.key !== "string" || !/^\d{4}-\d{2}$/.test(m.key)) throw new Error("bad month");
+    if (m.plan) {
+      const p = m.plan;
+      if (!isPence(p.income) || !isPence(p.savings, true) || !Array.isArray(p.fixed) || !p.budgets) throw new Error("bad plan");
+      if (!p.fixed.every(f => isText(f.name) && isPence(f.amount))) throw new Error("bad fixed cost");
+      if (!CATS.every(c => isPence(p.budgets[c.key] || 0, true))) throw new Error("bad budget");
+    }
+    if (m.review) {
+      const r = m.review;
+      if (!isPence(r.had, true) || !isPence(r.wantedSave, true) || !isPence(r.spent, true) || typeof r.improve !== "string") throw new Error("bad review");
+    }
+  }
+  let starts = 0;
+  for (const p of d.savings) {
+    if (!isId(p.id) || !isISODate(p.date)) throw new Error("bad savings");
+    if (p.type === "start") { starts++; if (!isPence(p.amount, true)) throw new Error("bad start"); }
+    else if (p.type === "deposit") { if (!isPence(p.amount)) throw new Error("bad deposit"); }
+    else if (p.type === "withdraw") { if (!isPence(p.amount) || !isText(p.reason)) throw new Error("bad withdrawal"); }
+    else throw new Error("bad savings type");
+  }
+  if (starts > 1) throw new Error("two starting balances");
+
+  const lastSpend = meta.find(m => m && m.key === "lastSpend" && isCat(m.cat) && subIds.has(m.subId)) || null;
+  return { entries: d.entries, subcats: d.subcats, months: d.months, savings: d.savings, lastSpend, exported: obj.exported };
+}
+
+$("restore-file").addEventListener("change", async () => {
+  const input = $("restore-file");
+  const file = input.files && input.files[0];
+  input.value = "";                       // so picking the same file again still works
+  $("backup-error").hidden = true;
+  $("restore-confirm").hidden = true;
+  pendingRestore = null;
+  if (!file) return;
+  if (file.size > 20 * 1024 * 1024) { showError("backup-error", "That file is too big to be a Kakeibo backup. Nothing was changed."); return; }
+
+  try {
+    pendingRestore = checkBackup(JSON.parse(await file.text()));
+  } catch (err) {
+    const newer = err && err.message === "newer format";
+    showError("backup-error", newer
+      ? "This backup was made by a newer version of the app. Nothing was changed."
+      : "This file isn't a Kakeibo backup, or it's damaged. Nothing was changed.");
+    return;
+  }
+
+  const b = pendingRestore;
+  const when = Date.parse(b.exported);
+  const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  $("restore-text").textContent =
+    `This backup${Number.isNaN(when) ? "" : ` from ${ukDate(new Date(when))}`} has ${count(b.entries.length, "entry", "entries")}, ` +
+    `${count(b.months.length, "planned or reviewed month", "planned or reviewed months")} and ${count(b.savings.length, "savings record", "savings records")}. ` +
+    `Restoring replaces everything in the app now (${count(state.entries.length, "entry", "entries")}, ${count(state.pot.length, "savings record", "savings records")}). ` +
+    `This can't be undone, so back up first if you might want today's data.`;
+  $("restore-confirm").hidden = false;
+  $("restore-cancel").focus();
+});
+
+$("restore-cancel").addEventListener("click", () => { pendingRestore = null; $("restore-confirm").hidden = true; });
+
+$("restore-go").addEventListener("click", async () => {
+  const b = pendingRestore; if (!b) return;
+  const exportedAt = Date.parse(b.exported);
+  const lastBackup = Number.isNaN(exportedAt) ? Date.now() : exportedAt;
+  const meta = [{ key: "firstUse", at: state.firstUse || Date.now() }, { key: "lastBackup", at: lastBackup }];
+  if (b.lastSpend) meta.push(b.lastSpend);
+
+  // Replace every store in ONE transaction: either all of it works, or nothing changes
+  if (state.saving) {
+    try {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORES, "readwrite");
+        const put = (name, rows) => { const s = tx.objectStore(name); s.clear(); rows.forEach(r => s.put(r)); };
+        put("entries", b.entries);
+        put("subcats", b.subcats);
+        put("months", b.months);
+        put("savings", b.savings);
+        put("meta", meta);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error("Cancelled"));
+      });
+    } catch (err) {
+      $("restore-confirm").hidden = true;
+      showError("backup-error", "Couldn't restore on this phone. Your data hasn't changed. Please try again.");
+      return;
+    }
+  }
+
+  state.entries = b.entries;
+  state.subs = b.subcats;
+  state.months = {};
+  for (const m of b.months) state.months[m.key] = m;
+  state.pot = b.savings;
+  state.lastSpend = b.lastSpend;
+  state.lastBackup = lastBackup;
+  state.weekFor = null;
+  state.renaming = null;
+  pendingRestore = null;
+  $("restore-confirm").hidden = true;
+  renderAll();
+  toast("Backup restored");
+});
+
+/* ============================================================
+   I. TOAST – small confirmation message
+   ============================================================ */
+let toastTimer;
+function toast(message) {
+  $("toast-text").textContent = message;
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), 2400);
+}
+
+/* ============================================================
+   J. START UP – open storage, load everything, draw the screens
+   ============================================================ */
+async function start() {
+  renderAll();   // draw straight away (empty) so the screen is never blank
+  try {
+    db = await openDB();
+    const [entries, subs, meta, months, pot] = await Promise.all([dbAll("entries"), dbAll("subcats"), dbAll("meta"), dbAll("months"), dbAll("savings")]);
+    state.entries = entries;
+    state.pot = pot;
+    state.subs = subs;
+    for (const m of months) state.months[m.key] = m;
+    state.lastSpend = meta.find(m => m.key === "lastSpend") || null;
+    const lb = meta.find(m => m.key === "lastBackup");
+    state.lastBackup = lb ? lb.at : null;
+    const fu = meta.find(m => m.key === "firstUse");
+    if (fu) state.firstUse = fu.at;
+    else {
+      // First time with backups: count from the oldest thing you've logged
+      state.firstUse = Math.min(Date.now(), ...entries.map(e => e.created || Date.now()), ...pot.map(p => p.created || Date.now()));
+      dbPut("meta", { key: "firstUse", at: state.firstUse }).catch(() => {});
+    }
+    // Ask Chrome to keep this data even when the phone is low on space
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (err) {}
+  } catch (err) {
+    // Storage is blocked: keep working in memory and say so clearly
+    state.saving = false;
+    $("save-warning").hidden = false;
+    let id = 1, order = 0;
+    for (const cat of Object.keys(STARTER_SUBS)) {
+      for (const name of STARTER_SUBS[cat]) state.subs.push({ id: id++, cat, name, hidden: false, order: order++ });
+    }
+  }
+  renderAll();
+}
+start();
+
+/* ============================================================
+   K. WORKING OFFLINE AND INSTALLING
+   ============================================================ */
+
+/* The service worker (sw.js) keeps a copy of the app on the phone */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => { /* app still works online */ });
+  });
+}
+
+/* Chrome tells us when the app can be installed; show the button then */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();          // we show our own button instead of Chrome's bar
+  installPrompt = e;
+  $("install-card").hidden = false;
+});
+$("install-btn").addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  const choice = await installPrompt.userChoice;
+  installPrompt = null;
+  $("install-card").hidden = true;
+  if (choice.outcome === "accepted") toast("Kakeibo installed");
+});
+window.addEventListener("appinstalled", () => { $("install-card").hidden = true; });
+</script>
+</body>
+</html>
